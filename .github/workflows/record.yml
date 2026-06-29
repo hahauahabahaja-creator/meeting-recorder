@@ -34,8 +34,8 @@ jobs:
       - name: 🛠️ Install System Dependencies
         run: |
           sudo apt-get update
-          # Install audio/video virtual display requirements
-          sudo apt-get install -y xvfb ffmpeg pulseaudio jq scrot xdotool libgbm-dev libxshmfence1 libnss3
+          # Install audio/video virtual display requirements, plus VNC/noVNC
+          sudo apt-get install -y xvfb ffmpeg pulseaudio jq scrot xdotool libgbm-dev libxshmfence1 libnss3 x11vnc novnc python3-websockify
           # Dynamically install libasound based on availability
           sudo apt-get install -y libasound2t64 || sudo apt-get install -y libasound2 || true
 
@@ -64,6 +64,54 @@ jobs:
           # 2. Initialize Xvfb virtual display
           Xvfb :99 -screen 0 1366x768x24 &
           export DISPLAY=:99
+          
+          # 2.1 Start VNC server (x11vnc) on display :99
+          # -nopw runs without password, -shared allows multiple connections, -forever keeps it alive
+          x11vnc -display :99 -forever -shared -bg -nopw -rfbport 5900 &
+          echo "📺 VNC Server started on port 5900"
+          
+          # 2.2 Start noVNC proxy on port 6080
+          # Using websockify to serve noVNC files on port 6080 and bridge to VNC port 5900
+          websockify --web /usr/share/novnc 6080 localhost:5900 &
+          echo "🌐 noVNC proxy started on port 6080"
+          
+          # 2.3 Start localhost.run tunnel in background
+          ssh -o StrictHostKeyChecking=no -R 80:localhost:6080 nokey@localhost.run > tunnel.log 2>&1 &
+          echo "🔗 Tunnel initialization started..."
+          
+          # 2.4 Send interactive RDP link to Telegram
+          python -c '
+          import os
+          import re
+          import time
+          import requests
+          
+          bot_token = os.environ.get("BOT_TOKEN")
+          chat_id = os.environ.get("CHAT_ID")
+          
+          # Wait up to 30 seconds for localhost.run to establish the tunnel
+          url = None
+          for _ in range(15):
+              time.sleep(2)
+              if os.path.exists("tunnel.log"):
+                  with open("tunnel.log", "r") as f:
+                      log_content = f.read()
+                  match = re.search(r"https?://[a-zA-Z0-9.-]+\.(?:lhr\.life|localhost\.run|lhr\.rocks)", log_content)
+                  if match:
+                      url = match.group(0)
+                      break
+          
+          if url:
+              vnc_url = f"{url}/vnc.html?autoconnect=true&resize=scale"
+              msg = f"🖥️ **Live Interactive RDP Link**\n━━━━━━━━━━━━━━━━━━━━━\nClick the link below to open the bot browser screen, type guest name, and join manually:\n🔗 {vnc_url}\n\n*Note:* Once joined successfully, you can close the browser tab. The bot will keep recording on the server!"
+              requests.post(f"https://api.telegram.org/bot{bot_token}/sendMessage", data={"chat_id": chat_id, "text": msg, "parse_mode": "Markdown"})
+              print(f"✅ Sent VNC URL to Telegram: {vnc_url}")
+          else:
+              print("❌ Failed to get tunnel URL from localhost.run. Log content:")
+              if os.path.exists("tunnel.log"):
+                  with open("tunnel.log", "r") as f:
+                      print(f.read())
+          '
           
           # 3. Launch Playwright bot script (runs directly from root)
           python meet_bot.py &
