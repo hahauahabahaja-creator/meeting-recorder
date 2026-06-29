@@ -157,7 +157,16 @@ def format_zoom_url(url):
 def automate_google_meet(page, url):
     log("📡 Automating Google Meet...")
     page.goto(url, timeout=60000)
-    page.wait_for_timeout(6000)
+    
+    log("⏳ Waiting for Google Meet page to finish loading...")
+    try:
+        # Wait up to 45 seconds for either the name input field OR a Join button to appear
+        page.wait_for_selector('input[type="text"], button:has-text("Join"), button:has-text("Ask")', timeout=45000)
+        log("✅ Google Meet pre-join page elements detected.")
+    except Exception as e:
+        log(f"⚠️ Page loading timed out or elements not found: {e}")
+        
+    page.wait_for_timeout(3000)
 
     # 1. Dismiss Dialog/Popup (Dismiss, Got it)
     log("🔄 Checking for dialogs...")
@@ -175,9 +184,12 @@ def automate_google_meet(page, url):
     except:
         pass
 
-    # 2. Turn off mic and camera (Ctrl+d and Ctrl+e)
+    # 2. Focus and Turn off mic and camera (Ctrl+d and Ctrl+e)
     log("🔇 Muting microphone & shutting down camera...")
     try:
+        # Click body to ensure keyboard focus is on the page
+        page.click('body')
+        page.wait_for_timeout(1000)
         page.keyboard.press("Control+d")
         page.wait_for_timeout(1000)
         page.keyboard.press("Control+e")
@@ -188,7 +200,7 @@ def automate_google_meet(page, url):
     # 3. Enter Guest Name like a human
     try:
         name_input = page.locator('input[type="text"]').first
-        if name_input.is_visible(timeout=3000):
+        if name_input.is_visible(timeout=5000):
             log("✍️ Typing display name...")
             human_type(name_input, BOT_NAME)
             page.wait_for_timeout(1000)
@@ -204,7 +216,7 @@ def automate_google_meet(page, url):
     for selector in selectors:
         try:
             btn = page.locator(selector).first
-            if btn.is_visible(timeout=2000):
+            if btn.is_visible(timeout=5000):
                 btn.click()
                 log(f"✅ Clicked Join using: {selector}")
                 joined = True
@@ -366,7 +378,9 @@ def run_bot():
                 "--mute-audio",
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage"
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--disable-software-rasterizer"
             ]
         )
 
