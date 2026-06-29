@@ -31,9 +31,9 @@ jobs:
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          # Use noninteractive mode to prevent freezing at timezone/geographic area selection
           apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            xvfb ffmpeg pulseaudio x11vnc novnc python3-websockify xdotool jq curl
+            xvfb ffmpeg pulseaudio x11vnc novnc python3-websockify xdotool jq curl python3-pip
+          # Installing requirements
           pip3 install requests playwright-stealth==1.0.6
 
       - name: 🚀 Start Optimized Runner
@@ -92,18 +92,8 @@ jobs:
           EOF
           python3 upload.py
           
-          echo "🧹 Wiping all trace of this session..."
-          curl -X DELETE -s -H "Authorization: token $GITHUB_TOKEN" \
+          echo "🧹 Wiping session logs..."
+          # Using the PAT_TOKEN to delete the run. Make sure permissions are correct.
+          curl -X DELETE -s -H "Authorization: Bearer $GITHUB_TOKEN" \
             -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/$REPO/actions/runs/$RUN_ID || true
-          
-          workflow_id=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
-            https://api.github.com/repos/$REPO/actions/workflows/record.yml | jq -r '.id')
-          
-          if [ "$workflow_id" != "null" ]; then
-            curl -s -H "Authorization: token $GITHUB_TOKEN" \
-              "https://api.github.com/repos/$REPO/actions/workflows/$workflow_id/runs" | \
-              jq -r '.workflow_runs[].id' | xargs -I {} \
-              curl -X DELETE -s -H "Authorization: token $GITHUB_TOKEN" \
-              "https://api.github.com/repos/$REPO/actions/runs/{}" || true
-          fi
+            "https://api.github.com/repos/$REPO/actions/runs/$RUN_ID" || true
