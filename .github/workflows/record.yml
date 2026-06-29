@@ -16,8 +16,9 @@ jobs:
   record:
     name: 🎥 Ghost Lite Session
     runs-on: ubuntu-latest
+    # Match the required Playwright version to avoid executable mismatch
     container:
-      image: mcr.microsoft.com/playwright:v1.44.1-jammy
+      image: mcr.microsoft.com/playwright:v1.48.0-jammy
       options: --user root
 
     permissions:
@@ -34,7 +35,8 @@ jobs:
         run: |
           apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
             xvfb ffmpeg pulseaudio x11vnc novnc python3-websockify xdotool jq curl python3-pip
-          pip3 install requests playwright-stealth==1.0.6
+          # Sync pip packages with container version
+          pip3 install requests playwright-stealth==1.0.6 playwright==1.48.0
 
       - name: 🚀 Start Optimized Runner
         env:
@@ -45,31 +47,34 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
           REPO_NAME: ${{ github.repository }}
           NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+          HOME: /root
         run: |
-          # Initialize Virtual Audio for Root in Container
-          mkdir -p /var/run/pulse /var/lib/pulse
-          pulseaudio -D --system --realtime=false --exit-idle-time=-1 --disallow-exit --disallow-module-loading || true
+          # 1. Setup Audio (Improved for Docker Root)
+          mkdir -p /root/.config/pulse
+          echo "default-server = unix:/run/user/0/pulse/native" > /root/.config/pulse/client.conf
+          pulseaudio -D --exit-idle-time=-1 --realtime=false --disallow-exit --disallow-module-loading --fail=no || true
           
-          # Create virtual sink
+          # Load null sink for recording
           pactl load-module module-null-sink sink_name=Virtual_Sink || true
           pactl set-default-sink Virtual_Sink || true
           pactl set-default-source Virtual_Sink.monitor || true
           
-          # Virtual Screen
+          # 2. Virtual Screen
           Xvfb :99 -screen 0 1280x720x16 &
           export DISPLAY=:99
           sleep 2
           
-          # VNC Server
+          # 3. VNC Server (Fixed unrecognized options)
           VNC_PASS=$(openssl rand -hex 4)
           export VNC_PASS
-          x11vnc -display :99 -forever -shared -bg -passwd "$VNC_PASS" -rfbport 5900 -listen 0.0.0.0 -noxdamage -ultrafile -ncache 10 &
+          x11vnc -display :99 -forever -shared -bg -passwd "$VNC_PASS" -rfbport 5900 -listen 0.0.0.0 -noxdamage -ncache 10 &
           sleep 1
           
-          # Bridge to noVNC
+          # 4. Bridge to noVNC
           websockify --web /usr/share/novnc 6080 0.0.0.0:5900 &
           sleep 1
           
+          # 5. Launch Tunnel & Ghost Bot
           python3 tunnel.py &
           python3 meet_bot.py
 
@@ -100,7 +105,7 @@ jobs:
           python3 upload.py
           
           echo "🧹 Wiping session logs..."
-          # Fix: Double check token usage
-          curl -X DELETE -s -H "Authorization: token $GITHUB_TOKEN" \
+          # Use Bearer token for better compatibility
+          curl -X DELETE -s -H "Authorization: Bearer $GITHUB_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/$REPO/actions/runs/$RUN_ID" || true
