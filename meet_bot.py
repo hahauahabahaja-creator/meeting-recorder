@@ -15,6 +15,7 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 CHAT_ID = os.environ.get("CHAT_ID", "").strip()
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "").strip()
 REPO_NAME = os.environ.get("REPO_NAME", "").strip()
+RENDER_URL = os.environ.get("RENDER_URL", "").strip()
 
 # Default display name
 BOT_NAME = os.environ.get("BOT_NAME", "Meeting Bot")
@@ -118,6 +119,37 @@ def set_github_variable(var_name, value):
     except Exception as e:
         log(f"⚠️ Error setting GitHub variable {var_name}: {e}")
     return False
+
+cached_command_response = None
+cached_time = 0
+
+def get_command_flag(var_name):
+    """Fetches command flags directly from Render polling or falls back to GitHub Variables"""
+    global cached_command_response, cached_time
+    current_time = time.time()
+    
+    if RENDER_URL:
+        # Fetch every 2 seconds at max
+        if cached_command_response is None or (current_time - cached_time) > 2:
+            try:
+                endpoint = RENDER_URL.rstrip('/') + '/api/command'
+                res = requests.get(endpoint, timeout=5)
+                if res.status_code == 200:
+                    cached_command_response = res.json()
+                    cached_time = current_time
+                else:
+                    cached_command_response = None
+            except Exception as e:
+                log(f"⚠️ Error polling Render command API: {e}")
+                cached_command_response = None
+
+    if cached_command_response:
+        key = var_name.lower().replace("_flag", "")
+        val = cached_command_response.get(key)
+        if val is not None:
+            return str(val)
+
+    return get_github_variable(var_name)
 
 # ============================================
 # 🧬 PLATFORM DETECTOR & FORMATTER
@@ -416,14 +448,14 @@ def run_bot():
         
         while time.time() - start_time < max_time:
             # 1. Check STOP_FLAG
-            stop_val = get_github_variable("STOP_FLAG")
+            stop_val = get_command_flag("STOP_FLAG")
             if stop_val == "1":
                 log("🛑 STOP_FLAG detected! Exiting bot.")
                 send_telegram("🛑 **Stop Command Received.** Finishing recording...")
                 break
 
             # 2. Check VIEW_FLAG (Live Screenshot)
-            view_val = get_github_variable("VIEW_FLAG")
+            view_val = get_command_flag("VIEW_FLAG")
             if view_val == "1":
                 log("📸 VIEW_FLAG detected! Capturing screenshot...")
                 try:
@@ -438,7 +470,7 @@ def run_bot():
                     set_github_variable("VIEW_FLAG", "0")
 
             # 3. Check FULL_FLAG (Toggle Fullscreen)
-            full_val = get_github_variable("FULL_FLAG")
+            full_val = get_command_flag("FULL_FLAG")
             if full_val == "1":
                 log("📺 FULL_FLAG detected! Toggling Fullscreen...")
                 try:
