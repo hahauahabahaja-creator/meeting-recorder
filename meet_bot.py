@@ -676,6 +676,8 @@ def run_bot():
             "--disable-setuid-sandbox",
             "--disable-dev-shm-usage",
             "--enable-unsafe-swiftshader",
+            "--use-gl=angle",
+            "--use-angle=swiftshader",
             "--disable-background-timer-throttling",
             "--disable-backgrounding-occluded-windows",
             "--disable-renderer-backgrounding",
@@ -815,6 +817,10 @@ def run_bot():
                         return mockDevice;
                     }));
                 };
+            }
+
+            if (window.MediaDevices && window.MediaDevices.prototype && window.MediaDevices.prototype.enumerateDevices) {
+                window.MediaDevices.prototype.enumerateDevices = navigator.mediaDevices.enumerateDevices;
             }
 
             // 4. Mock Permissions API to auto-grant camera and microphone checks
