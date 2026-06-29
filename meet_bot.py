@@ -411,8 +411,9 @@ def run_bot():
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
                 "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--disable-software-rasterizer"
+                "--use-gl=angle",
+                "--use-angle=swiftshader",
+                "--enable-unsafe-swiftshader"
             ]
         )
 
@@ -421,6 +422,9 @@ def run_bot():
             permissions=['camera', 'microphone'],
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
         )
+        
+        # Spoof navigator.webdriver globally for all context windows/iframes
+        context.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined })")
         
         page = context.new_page()
         
