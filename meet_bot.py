@@ -19,7 +19,7 @@ REPO_NAME = os.environ.get("REPO_NAME", "").strip()
 RENDER_URL = os.environ.get("RENDER_URL", "").strip()
 
 # Default display name
-BOT_NAME = os.environ.get("BOT_NAME", "Meeting Bot")
+BOT_NAME = os.environ.get("BOT_NAME", "Priyanshu")
 
 # ============================================
 # 🛠️ HELPER FUNCTIONS
@@ -301,236 +301,259 @@ def automate_google_meet(page, url):
     
     context.on("page", on_new_page)
     
-    # Navigate using domcontentloaded (don't wait for all resources)
-    log("🌐 Loading Google Meet page...")
-    page.goto(url, wait_until="domcontentloaded", timeout=60000)
-    log("✅ DOM loaded. Waiting for Meet UI to initialize...")
-    
-    # Handle Google consent/policies redirect
-    page.wait_for_timeout(3000)
-    page = handle_google_consent(page, context, url)
-    
-    # Smart polling: wait for ANY interactive element with retries
-    max_wait = 120  # 2 minutes max
-    poll_interval = 3
-    elapsed = 0
-    element_found = False
-    
-    while elapsed < max_wait:
-        # Check if name input OR join button exists in DOM (even if not visible)
-        found = page.evaluate("""
+    for attempt in range(2):
+        log(f"🔄 Google Meet Join Attempt {attempt + 1}/2...")
+        if attempt > 0:
+            log("⚠️ First attempt did not enter call. Reloading page for a fresh retry...")
+            page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            page.wait_for_timeout(3000)
+        else:
+            # Navigate using domcontentloaded (don't wait for all resources)
+            log("🌐 Loading Google Meet page...")
+            page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            log("✅ DOM loaded. Waiting for Meet UI to initialize...")
+            page.wait_for_timeout(3000)
+            
+        # Handle Google consent/policies redirect
+        page = handle_google_consent(page, context, url)
+        
+        # Smart polling: wait for ANY interactive element with retries
+        max_wait = 120  # 2 minutes max
+        poll_interval = 3
+        elapsed = 0
+        element_found = False
+        
+        while elapsed < max_wait:
+            # Check if name input OR join button exists in DOM (even if not visible)
+            found = page.evaluate("""
+                () => {
+                    let input = document.querySelector('input[type="text"]');
+                    let joinBtn = [...document.querySelectorAll('button')].find(
+                        b => (b.innerText || '').match(/join|ask/i)
+                    );
+                    return {
+                        hasInput: !!input,
+                        hasJoin: !!joinBtn,
+                        inputPlaceholder: input ? (input.placeholder || 'Name Input') : '',
+                        joinText: joinBtn ? joinBtn.innerText.trim() : ''
+                    };
+                }
+            """)
+            
+            if found.get("hasInput") or found.get("hasJoin"):
+                log(f"✅ Meet UI detected! Input: {found.get('inputPlaceholder', 'N/A')}, Button: {found.get('joinText', 'N/A')}")
+                element_found = True
+                break
+            
+            log(f"⏳ Waiting for Meet UI... ({elapsed}s / {max_wait}s)")
+            page.wait_for_timeout(poll_interval * 1000)
+            elapsed += poll_interval
+        
+        if not element_found:
+            log("⚠️ Meet UI elements not found after 2 minutes. Attempting to proceed anyway...")
+        
+        page.wait_for_timeout(2000)
+        
+        # 1. Dismiss any dialogs (Got it, Dismiss, etc.)
+        log("🔄 Dismissing dialogs...")
+        page.evaluate("""
             () => {
-                let input = document.querySelector('input[type="text"]');
-                let joinBtn = [...document.querySelectorAll('button')].find(
-                    b => (b.innerText || '').match(/join|ask/i)
-                );
-                return {
-                    hasInput: !!input,
-                    hasJoin: !!joinBtn,
-                    inputPlaceholder: input ? (input.placeholder || 'Name Input') : '',
-                    joinText: joinBtn ? joinBtn.innerText.trim() : ''
-                };
+                document.querySelectorAll('button').forEach(btn => {
+                    let txt = (btn.innerText || '').toLowerCase();
+                    if (txt.includes('got it') || txt.includes('dismiss') || txt.includes('i understand') || txt.includes('ok')) {
+                        btn.click();
+                    }
+                });
             }
         """)
-        
-        if found.get("hasInput") or found.get("hasJoin"):
-            log(f"✅ Meet UI detected! Input: {found.get('inputPlaceholder', 'N/A')}, Button: {found.get('joinText', 'N/A')}")
-            element_found = True
-            break
-        
-        log(f"⏳ Waiting for Meet UI... ({elapsed}s / {max_wait}s)")
-        page.wait_for_timeout(poll_interval * 1000)
-        elapsed += poll_interval
-    
-    if not element_found:
-        log("⚠️ Meet UI elements not found after 2 minutes. Attempting to proceed anyway...")
-    
-    page.wait_for_timeout(2000)
-    
-    # 1. Dismiss any dialogs (Got it, Dismiss, etc.)
-    log("🔄 Dismissing dialogs...")
-    page.evaluate("""
-        () => {
-            document.querySelectorAll('button').forEach(btn => {
-                let txt = (btn.innerText || '').toLowerCase();
-                if (txt.includes('got it') || txt.includes('dismiss') || txt.includes('i understand') || txt.includes('ok')) {
-                    btn.click();
-                }
-            });
-        }
-    """)
-    page.wait_for_timeout(1000)
-    
-    # 2. Turn off mic and camera via keyboard shortcuts
-    log("🔇 Muting microphone & camera...")
-    try:
-        page.click('body', timeout=3000)
-        page.wait_for_timeout(500)
-        page.keyboard.press("Control+d")
-        page.wait_for_timeout(500)
-        page.keyboard.press("Control+e")
         page.wait_for_timeout(1000)
-    except Exception as e:
-        log(f"⚠️ Keyboard shortcuts failed: {e}")
-    
-    # Also try clicking mic/camera toggle buttons directly via JS
-    page.evaluate("""
-        () => {
-            // Find and click mic/camera toggle buttons by aria-label
-            document.querySelectorAll('[aria-label*="microphone"], [aria-label*="camera"], [data-tooltip*="microphone"], [data-tooltip*="camera"]').forEach(el => {
-                if (el.tagName === 'BUTTON' || el.closest('button')) {
-                    (el.closest('button') || el).click();
-                }
-            });
-        }
-    """)
-    page.wait_for_timeout(1000)
-    
-    # 3. Enter guest name using multiple strategies
-    log("✍️ Entering display name...")
-    name_entered = False
-    
-    # Strategy A: Direct Playwright interaction
-    try:
-        name_input = page.locator('input[type="text"]').first
-        if name_input.is_visible(timeout=3000):
-            name_input.click()
-            name_input.fill("")
-            human_type(name_input, BOT_NAME)
-            name_entered = True
-            log("✅ Name typed via Playwright.")
-    except:
-        pass
-    
-    # Strategy B: JavaScript forced entry with React-compatible events
-    if not name_entered:
-        log("✍️ Trying JS name injection...")
-        result = page.evaluate("""
-            (botName) => {
-                let inputs = document.querySelectorAll('input[type="text"]');
-                for (let input of inputs) {
-                    // Use React's native input setter to bypass virtual DOM
-                    let nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-                        window.HTMLInputElement.prototype, 'value'
-                    ).set;
-                    nativeInputValueSetter.call(input, botName);
-                    input.dispatchEvent(new Event('input', { bubbles: true }));
-                    input.dispatchEvent(new Event('change', { bubbles: true }));
-                    input.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true }));
-                    input.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
-                    return true;
-                }
-                return false;
-            }
-        """, BOT_NAME)
-        if result:
-            name_entered = True
-            log("✅ Name injected via JS.")
-        else:
-            log("⚠️ No text input found for name.")
-    
-    page.wait_for_timeout(2000)
-    
-    # 4. Click Join/Ask to join button with multiple strategies
-    log("⏳ Attempting to join meeting...")
-    human_mouse_move(page)
-    joined = False
-    
-    # Strategy A: Playwright locators
-    join_selectors = [
-        "button:has-text('Ask to join')",
-        "button:has-text('Join now')",
-        "button:has-text('Join')",
-        "button:has-text('Ask')",
-    ]
-    for sel in join_selectors:
+        
+        # 2. Turn off mic and camera via keyboard shortcuts
+        log("🔇 Muting microphone & camera...")
         try:
-            btn = page.locator(sel).first
-            if btn.is_visible(timeout=2000):
-                btn.click()
-                log(f"✅ Joined via Playwright: {sel}")
-                joined = True
-                break
+            page.click('body', timeout=3000)
+            page.wait_for_timeout(500)
+            page.keyboard.press("Control+d")
+            page.wait_for_timeout(500)
+            page.keyboard.press("Control+e")
+            page.wait_for_timeout(1000)
+        except Exception as e:
+            log(f"⚠️ Keyboard shortcuts failed: {e}")
+        
+        # Also try clicking mic/camera toggle buttons directly via JS
+        page.evaluate("""
+            () => {
+                // Find and click mic/camera toggle buttons by aria-label
+                document.querySelectorAll('[aria-label*="microphone"], [aria-label*="camera"], [data-tooltip*="microphone"], [data-tooltip*="camera"]').forEach(el => {
+                    if (el.tagName === 'BUTTON' || el.closest('button')) {
+                        (el.closest('button') || el).click();
+                    }
+                });
+            }
+        """)
+        page.wait_for_timeout(1000)
+        
+        # 3. Enter guest name using multiple strategies
+        log("✍️ Entering display name...")
+        name_entered = False
+        
+        # Strategy A: Direct Playwright interaction
+        try:
+            name_input = page.locator('input[type="text"]').first
+            if name_input.is_visible(timeout=3000):
+                name_input.click()
+                name_input.fill("")
+                human_type(name_input, BOT_NAME)
+                name_entered = True
+                log("✅ Name typed via Playwright.")
+                page.wait_for_timeout(500)
+                name_input.press("Enter")
+                log("⌨️ Sent Enter key press on name input.")
         except:
-            continue
-    
-    # Strategy B: JavaScript click with retry
-    if not joined:
-        log("⚠️ Trying JS join click...")
-        for attempt in range(3):
+            pass
+        
+        # Strategy B: JavaScript forced entry with React-compatible events
+        if not name_entered:
+            log("✍️ Trying JS name injection...")
+            result = page.evaluate("""
+                (botName) => {
+                    let inputs = document.querySelectorAll('input[type="text"]');
+                    for (let input of inputs) {
+                        // Use React's native input setter to bypass virtual DOM
+                        let nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                            window.HTMLInputElement.prototype, 'value'
+                        ).set;
+                        nativeInputValueSetter.call(input, botName);
+                        input.dispatchEvent(new Event('input', { bubbles: true }));
+                        input.dispatchEvent(new Event('change', { bubbles: true }));
+                        input.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true }));
+                        input.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
+                        return true;
+                    }
+                    return false;
+                }
+            """, BOT_NAME)
+            if result:
+                name_entered = True
+                log("✅ Name injected via JS.")
+                page.wait_for_timeout(500)
+                page.keyboard.press("Enter")
+                log("⌨️ Sent Enter key press via keyboard.")
+            else:
+                log("⚠️ No text input found for name.")
+        
+        page.wait_for_timeout(2000)
+        
+        # 4. Click Join/Ask to join button with multiple strategies (as fallback)
+        log("⏳ Attempting fallback join clicks...")
+        human_mouse_move(page)
+        joined = False
+        
+        # Strategy A: Playwright locators
+        join_selectors = [
+            "button:has-text('Ask to join')",
+            "button:has-text('Join now')",
+            "button:has-text('Join')",
+            "button:has-text('Ask')",
+        ]
+        for sel in join_selectors:
+            try:
+                btn = page.locator(sel).first
+                if btn.is_visible(timeout=2000):
+                    btn.click()
+                    log(f"✅ Joined via Playwright fallback: {sel}")
+                    joined = True
+                    break
+            except:
+                continue
+        
+        # Strategy B: JavaScript click with retry
+        if not joined:
+            log("⚠️ Trying JS join click fallback...")
+            for js_attempt in range(3):
+                result = page.evaluate("""
+                    () => {
+                        let btns = [...document.querySelectorAll('button')];
+                        let joinBtn = btns.find(b => {
+                            let txt = (b.innerText || '').toLowerCase();
+                            return (txt.includes('join') || txt.includes('ask')) && !b.disabled;
+                        });
+                        if (joinBtn) {
+                            joinBtn.scrollIntoView();
+                            joinBtn.focus();
+                            joinBtn.click();
+                            return joinBtn.innerText.trim();
+                        }
+                        return null;
+                    }
+                """)
+                if result:
+                    log(f"✅ Joined via JS click fallback: '{result}' (attempt {js_attempt+1})")
+                    joined = True
+                    break
+                page.wait_for_timeout(2000)
+        
+        # Strategy B2: Force-enable disabled buttons and click
+        if not joined:
+            log("⚠️ Trying force-enable disabled buttons fallback...")
             result = page.evaluate("""
                 () => {
                     let btns = [...document.querySelectorAll('button')];
                     let joinBtn = btns.find(b => {
                         let txt = (b.innerText || '').toLowerCase();
-                        return (txt.includes('join') || txt.includes('ask')) && !b.disabled;
+                        return txt.includes('join') || txt.includes('ask');
                     });
                     if (joinBtn) {
-                        joinBtn.scrollIntoView();
-                        joinBtn.focus();
+                        // Force remove disabled state
+                        joinBtn.disabled = false;
+                        joinBtn.removeAttribute('disabled');
+                        joinBtn.style.pointerEvents = 'auto';
+                        joinBtn.style.opacity = '1';
+                        // Remove any aria-disabled
+                        joinBtn.removeAttribute('aria-disabled');
+                        // Force click
                         joinBtn.click();
+                        // Also dispatch click event
+                        joinBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
                         return joinBtn.innerText.trim();
                     }
                     return null;
                 }
             """)
             if result:
-                log(f"✅ Joined via JS click: '{result}' (attempt {attempt+1})")
+                log(f"✅ Force-joined via disabled button override fallback: '{result}'")
                 joined = True
-                break
-            page.wait_for_timeout(2000)
-    
-    # Strategy B2: Force-enable disabled buttons and click
-    if not joined:
-        log("⚠️ Trying force-enable disabled buttons...")
-        result = page.evaluate("""
+        
+        # Strategy C: Simulate Enter key on the name field fallback
+        if not joined:
+            log("⚠️ Trying Enter key submission fallback...")
+            try:
+                page.keyboard.press("Tab")
+                page.wait_for_timeout(500)
+                page.keyboard.press("Enter")
+                page.wait_for_timeout(2000)
+                log("✅ Submitted via Enter key fallback.")
+                joined = True
+            except:
+                pass
+        
+        # 5. Verify if we successfully initiated join or are in/waiting
+        page.wait_for_timeout(5000)
+        
+        # Check if name input is still present (if it's gone, we successfully left lobby!)
+        lobby_still_visible = page.evaluate("""
             () => {
-                let btns = [...document.querySelectorAll('button')];
-                let joinBtn = btns.find(b => {
-                    let txt = (b.innerText || '').toLowerCase();
-                    return txt.includes('join') || txt.includes('ask');
-                });
-                if (joinBtn) {
-                    // Force remove disabled state
-                    joinBtn.disabled = false;
-                    joinBtn.removeAttribute('disabled');
-                    joinBtn.style.pointerEvents = 'auto';
-                    joinBtn.style.opacity = '1';
-                    // Remove any aria-disabled
-                    joinBtn.removeAttribute('aria-disabled');
-                    // Force click
-                    joinBtn.click();
-                    // Also dispatch click event
-                    joinBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-                    return joinBtn.innerText.trim();
-                }
-                return null;
+                let input = document.querySelector('input[type="text"]');
+                return !!(input && (input.offsetWidth > 0 || input.offsetHeight > 0));
             }
         """)
-        if result:
-            log(f"✅ Force-joined via disabled button override: '{result}'")
-            joined = True
-    
-    # Strategy C: Simulate Enter key on the name field
-    if not joined:
-        log("⚠️ Trying Enter key submission...")
-        try:
-            page.keyboard.press("Tab")
-            page.wait_for_timeout(500)
-            page.keyboard.press("Enter")
-            page.wait_for_timeout(2000)
-            log("✅ Submitted via Enter key.")
-            joined = True
-        except:
-            pass
-    
-    if not joined:
-        log("❌ Could not join Google Meet after all strategies.")
-    else:
-        # Wait a moment to confirm we're in the meeting
-        page.wait_for_timeout(5000)
-        log("🎯 Google Meet join sequence completed.")
-    
+        
+        if not lobby_still_visible:
+            log("🎯 Successfully joined or initiated join (lobby name input is gone!).")
+            break
+        else:
+            log("⚠️ Lobby name input is still visible. Join request might have failed or been blocked.")
+            
     return page
 
 # ============================================
@@ -828,11 +851,24 @@ def run_bot():
                 const _origQuery = navigator.permissions.query.bind(navigator.permissions);
                 navigator.permissions.query = function(descriptor) {
                     if (descriptor && (descriptor.name === 'camera' || descriptor.name === 'microphone')) {
-                        return Promise.resolve({
-                            state: 'granted',
-                            status: 'granted',
-                            onchange: null
+                        const mockStatus = {};
+                        try {
+                            Object.setPrototypeOf(mockStatus, PermissionStatus.prototype);
+                        } catch (e) {
+                            try {
+                                Object.setPrototypeOf(mockStatus, EventTarget.prototype);
+                            } catch (err) {}
+                        }
+                        Object.defineProperties(mockStatus, {
+                            state: { value: 'granted', enumerable: true },
+                            status: { value: 'granted', enumerable: true },
+                            onchange: { value: null, writable: true, enumerable: true }
                         });
+                        mockStatus.addEventListener = mockStatus.addEventListener || function() {};
+                        mockStatus.removeEventListener = mockStatus.removeEventListener || function() {};
+                        mockStatus.dispatchEvent = mockStatus.dispatchEvent || function() { return true; };
+                        
+                        return Promise.resolve(mockStatus);
                     }
                     return _origQuery(descriptor);
                 };
