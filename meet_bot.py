@@ -81,6 +81,44 @@ def human_mouse_move(page):
     except Exception as e:
         log(f"⚠️ Mouse movement simulation failed: {e}")
 
+def human_click(page, locator):
+    """Moves the mouse smoothly to the element and clicks with realistic delay and offset"""
+    try:
+        if not locator.is_visible():
+            return False
+            
+        box = locator.bounding_box()
+        if not box:
+            locator.click()  # Fallback to direct click
+            return True
+            
+        # Target point with a small random offset from center
+        target_x = box['x'] + box['width'] / 2 + random.uniform(-10, 10)
+        target_y = box['y'] + box['height'] / 2 + random.uniform(-5, 5)
+        
+        # Start from a random position to simulate moving to the element
+        start_x = random.randint(100, 1000)
+        start_y = random.randint(100, 600)
+        
+        # Move in 6-12 small steps to simulate smooth motion
+        steps = random.randint(6, 12)
+        for i in range(1, steps + 1):
+            curr_x = start_x + (target_x - start_x) * (i / steps)
+            curr_y = start_y + (target_y - start_y) * (i / steps)
+            page.mouse.move(curr_x, curr_y)
+            time.sleep(random.uniform(0.015, 0.04))
+            
+        # Click with human press/release delay
+        page.mouse.click(target_x, target_y, delay=random.randint(80, 200))
+        return True
+    except Exception as e:
+        log(f"⚠️ Human click failed, falling back to locator.click(): {e}")
+        try:
+            locator.click(timeout=3000)
+            return True
+        except:
+            return False
+
 def generate_fake_video():
     """Generate a tiny .y4m fake video file for Chrome's fake camera"""
     fake_path = "/tmp/fake_camera.y4m"
@@ -401,7 +439,7 @@ def automate_google_meet(page, url):
         try:
             name_input = page.locator('input[type="text"]').first
             if name_input.is_visible(timeout=3000):
-                name_input.click()
+                human_click(page, name_input)
                 name_input.fill("")
                 human_type(name_input, BOT_NAME)
                 name_entered = True
@@ -460,10 +498,10 @@ def automate_google_meet(page, url):
             try:
                 btn = page.locator(sel).first
                 if btn.is_visible(timeout=2000):
-                    btn.click()
-                    log(f"✅ Joined via Playwright fallback: {sel}")
-                    joined = True
-                    break
+                    if human_click(page, btn):
+                        log(f"✅ Joined via Playwright fallback: {sel}")
+                        joined = True
+                        break
             except:
                 continue
         
