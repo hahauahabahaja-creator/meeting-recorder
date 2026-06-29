@@ -61,23 +61,56 @@ jobs:
           export DISPLAY=:99
           sleep 3
           
-          # 2. VNC & noVNC (Increased compatibility and binding to all interfaces)
+          # 2. VNC Server (Optimized for performance and control)
           VNC_PASS=$(openssl rand -hex 4)
           export VNC_PASS
-          x11vnc -display :99 -forever -shared -bg -passwd "$VNC_PASS" -rfbport 5900 -listen 0.0.0.0 &
+          x11vnc -display :99 -forever -shared -bg -passwd "$VNC_PASS" -rfbport 5900 -listen 0.0.0.0 -noxdamage -repeat -capslock &
           sleep 2
           
-          # Start websockify and ensure it bridges correctly
+          # 3. Custom GHOST UI for noVNC
+          sudo mkdir -p /usr/share/novnc/custom
+          cat << 'EOF' | sudo tee /usr/share/novnc/index.html
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <title>Ghost RDP | Control Panel</title>
+              <style>
+                  body { background: #0a0a0a; color: #00ff41; font-family: 'Courier New', Courier, monospace; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; overflow: hidden; }
+                  .container { border: 2px solid #00ff41; padding: 30px; border-radius: 10px; background: rgba(0, 255, 65, 0.05); box-shadow: 0 0 20px #00ff41; text-align: center; }
+                  h1 { font-size: 2.5em; text-shadow: 0 0 10px #00ff41; margin-bottom: 10px; }
+                  p { color: #888; margin-bottom: 25px; }
+                  .btn { background: #00ff41; color: #000; padding: 15px 30px; border: none; border-radius: 5px; font-weight: bold; cursor: pointer; text-decoration: none; font-size: 1.2em; transition: 0.3s; }
+                  .btn:hover { background: #000; color: #00ff41; box-shadow: 0 0 15px #00ff41; }
+                  .status { margin-top: 20px; font-size: 0.8em; color: #555; }
+              </style>
+          </head>
+          <body>
+              <div class="container">
+                  <h1>GHOST RDP ACCESS</h1>
+                  <p>Encrypted Tunnel Active | Secure Session</p>
+                  <a id="join-link" class="btn" href="#">LAUNCH CONSOLE</a>
+                  <div class="status">VNC Port: 5900 | Resolution: 1366x768</div>
+              </div>
+              <script>
+                  const params = new URLSearchParams(window.location.search);
+                  const pass = params.get('password');
+                  document.getElementById('join-link').href = `vnc.html?autoconnect=true&resize=scale&password=${pass}`;
+              </script>
+          </body>
+          </html>
+          EOF
+          
+          # 4. Start websockify
           websockify --web /usr/share/novnc 6080 0.0.0.0:5900 &
           sleep 2
           
-          # 3. Public Tunnel
+          # 5. Public Tunnel
           python tunnel.py &
           
-          # 4. Main Bot
+          # 6. Main Bot
           python meet_bot.py
 
-      - name: 📤 Upload Recording
+      - name: 📤 Smart Telegram Upload
         if: always()
         env:
           BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -87,34 +120,48 @@ jobs:
           import os
           import subprocess
           import requests
+          import time
 
           bot_token = os.environ.get('BOT_TOKEN', '')
           chat_id = os.environ.get('CHAT_ID', '')
           video_file = 'output.mp4'
 
+          def send_msg(text):
+              requests.post(f'https://api.telegram.org/bot{bot_token}/sendMessage', 
+                           data={'chat_id': chat_id, 'text': text, 'parse_mode': 'Markdown'})
+
           if not os.path.exists(video_file):
+              send_msg("⚠️ **Session Ended.**")
               exit(0)
 
           size_mb = os.path.getsize(video_file) / (1024 * 1024)
-          requests.post(f'https://api.telegram.org/bot{bot_token}/sendMessage', data={'chat_id': chat_id, 'text': f'📹 **Recording Complete!** ({size_mb:.1f} MB)\n📤 Uploading...'})
+          send_msg(f"✅ **Recording Finished!** ({size_mb:.1f} MB)\n📤 Uploading...")
 
           if size_mb < 49:
               with open(video_file, 'rb') as f:
-                  requests.post(f'https://api.telegram.org/bot{bot_token}/sendDocument', data={'chat_id': chat_id}, files={'document': f})
+                  requests.post(f'https://api.telegram.org/bot{bot_token}/sendDocument', 
+                                  data={'chat_id': chat_id, 'caption': '🎬 **Meeting Recording**'}, 
+                                  files={'document': f})
           else:
-              subprocess.run(["ffmpeg", "-i", video_file, "-c", "copy", "-f", "segment", "-segment_time", "1200", "-reset_timestamps", "1", "chunk_%03d.mp4"])
-              for chunk in sorted([f for f in os.listdir('.') if f.startswith('chunk_')]):
+              subprocess.run(["ffmpeg", "-i", video_file, "-c", "copy", "-f", "segment", "-segment_time", "1200", "-reset_timestamps", "1", "part_%03d.mp4"])
+              chunks = sorted([f for f in os.listdir('.') if f.startswith('part_')])
+              for chunk in chunks:
                   with open(chunk, 'rb') as f:
-                      requests.post(f'https://api.telegram.org/bot{bot_token}/sendDocument', data={'chat_id': chat_id}, files={'document': f})
+                      requests.post(f'https://api.telegram.org/bot{bot_token}/sendDocument', 
+                                  data={'chat_id': chat_id}, files={'document': f})
                   os.remove(chunk)
           EOF
           python upload.py
 
-      - name: 🧹 Cleanup
+      - name: 🧹 Auto-Cleanup
         if: always()
         env:
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
         run: |
-          curl -X DELETE -s -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/repos/$REPO/actions/runs/$RUN_ID || true
+          sleep 5
+          curl -X DELETE -s -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/$REPO/actions/runs/$RUN_ID || true
+          echo "Run history cleared."
