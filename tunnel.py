@@ -42,13 +42,11 @@ def start_tunnel():
     if ngrok_token:
         print("📡 Starting Ngrok tunnel...")
         try:
-            # Install ngrok
             subprocess.run("ngrok version", shell=True, capture_output=True)
             if subprocess.run("ngrok version", shell=True).returncode != 0:
                 subprocess.run("curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null && echo \"deb https://ngrok-agent.s3.amazonaws.com buster main\" | sudo tee /etc/apt/sources.list.d/ngrok.list && sudo apt-get update && sudo apt-get install -y ngrok", shell=True)
 
             subprocess.run(f"ngrok config add-authtoken {ngrok_token}", shell=True)
-            # Use --basic-auth or other flags if needed, but the warning bypass is via headers
             subprocess.Popen("ngrok http 6080 --log=stdout > tunnel_ngrok.log 2>&1", shell=True)
 
             for _ in range(10):
@@ -60,7 +58,7 @@ def start_tunnel():
         except Exception as e:
             print(f"⚠️ Ngrok failed: {e}")
 
-    # 2. Try Fallbacks if Ngrok failed or was not provided
+    # 2. Try Fallbacks
     if not final_url:
         fallbacks = [
             {"name": "Serveo", "cmd": "ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=60 -R 80:localhost:6080 serveo.net", "pattern": r"https?://[a-zA-Z0-9.-]+\.serveo\.net", "log": "tunnel_serveo.log"},
@@ -71,47 +69,35 @@ def start_tunnel():
         for fb in fallbacks:
             print(f"📡 Starting {fb['name']} tunnel...")
             proc = subprocess.Popen(f"{fb['cmd']} > {fb['log']} 2>&1", shell=True)
-
             for _ in range(5):
                 time.sleep(3)
                 if os.path.exists(fb['log']):
-                    with open(fb['log'], "r") as f:
-                        log_content = f.read()
+                    with open(fb['log'], "r") as f: log_content = f.read()
                     match = re.search(fb['pattern'], log_content)
                     if match:
                         final_url = match.group(0)
-                        print(f"✅ {fb['name']} tunnel established: {final_url}")
                         break
-
-            if final_url:
-                break
+            if final_url: break
             else:
-                print(f"⚠️ {fb['name']} failed. Killing process...")
                 proc.terminate()
                 subprocess.run(f"pkill -f '{fb['name'].lower()}'", shell=True)
 
-    # 3. Send to Telegram
+    # 3. Send to Telegram (English Version)
     if final_url:
-        # BYPASS NGROK WARNING: We use a trick to bypass the "ngrok free browser warning"
-        # By providing the URL with the password pre-filled and autoconnect.
-        # To completely bypass the ngrok warning page on mobile/PC, you usually need to click 'Visit Site'.
-        # However, we can instruct the user.
-
         vnc_url = f"{final_url}/vnc.html?autoconnect=true&resize=scale&password={vnc_pass}"
-
         msg = (
             "🖥️ **Interactive RDP Access**\n"
             "━━━━━━━━━━━━━━━━━━━━━\n"
             f"🔗 [Open Interactive RDP]({vnc_url})\n\n"
-            "⚠️ **Important:** Agar aapko 'Ngrok Warning' page dikhe, to wahan niche **'Visit Site'** button par click karein. Ye sirf ek baar dikhega.\n\n"
+            "⚠️ **Note:** If you see an 'Ngrok Warning' page, click the **'Visit Site'** button at the bottom. This only appears once.\n\n"
             "**Steps:**\n"
-            "1. Link kholiye aur 'Visit Site' dabaiye.\n"
-            "2. Meeting join karein.\n"
-            "3. Telegram par vapas aakar **Start Recording** dabayein."
+            "1. Open the link and click 'Visit Site'.\n"
+            "2. Join the meeting manually.\n"
+            "3. Return to Telegram and click **'Start Recording'**."
         )
         send_telegram(bot_token, chat_id, msg)
     else:
-        send_telegram(bot_token, chat_id, "❌ **Tunnel Error:** Failed to establish any public tunnel.")
+        send_telegram(bot_token, chat_id, "❌ **Tunnel Error:** Failed to establish connection.")
 
 if __name__ == "__main__":
     start_tunnel()
