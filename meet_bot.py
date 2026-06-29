@@ -1,7 +1,5 @@
 import os
 import time
-import sys
-import random
 import requests
 import subprocess
 from datetime import datetime
@@ -17,9 +15,7 @@ CHAT_ID = os.environ.get("CHAT_ID", "").strip()
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "").strip()
 REPO_NAME = os.environ.get("REPO_NAME", "").strip()
 RENDER_URL = os.environ.get("RENDER_URL", "").strip()
-
-# Default display name
-BOT_NAME = os.environ.get("BOT_NAME", "Priyanshu")
+BOT_NAME = os.environ.get("BOT_NAME", "Meeting Bot")
 
 # ============================================
 # 🛠️ HELPER FUNCTIONS
@@ -28,7 +24,6 @@ def log(message):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {message}")
 
 def send_telegram(message):
-    """Sends a text message updates to Telegram"""
     if BOT_TOKEN and CHAT_ID:
         try:
             requests.post(
@@ -36,140 +31,16 @@ def send_telegram(message):
                 data={'chat_id': CHAT_ID, 'text': message, 'parse_mode': 'Markdown'},
                 timeout=10
             )
-            log("✅ Telegram status update sent.")
         except Exception as e:
-            log(f"⚠️ Telegram update sending failed: {e}")
-
-def send_telegram_photo(photo_path, caption):
-    """Sends a screenshot photo update to Telegram"""
-    if BOT_TOKEN and CHAT_ID:
-        try:
-            with open(photo_path, 'rb') as f:
-                requests.post(
-                    f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
-                    data={'chat_id': CHAT_ID, 'caption': caption},
-                    files={'photo': f},
-                    timeout=30
-                )
-            log("✅ Telegram live screenshot sent.")
-        except Exception as e:
-            log(f"⚠️ Telegram screenshot sending failed: {e}")
-
-def human_type(element, text):
-    """Types text like a human with random delay between keys"""
-    try:
-        element.click()
-        time.sleep(random.uniform(0.3, 0.7))
-        if hasattr(element, "press_sequentially"):
-            element.press_sequentially(text, delay=random.randint(70, 180))
-        else:
-            element.type(text, delay=random.randint(70, 180))
-        log(f"✍️ Typed text: '{text}' successfully.")
-    except Exception as e:
-        log(f"ℹ️ Falling back to direct fill due to: {e}")
-        try:
-            element.fill(text)
-        except Exception as fill_err:
-            log(f"❌ Failed to fill text: {fill_err}")
-
-def human_mouse_move(page):
-    """Simulates realistic mouse movements to bypass bot-checks"""
-    try:
-        for _ in range(random.randint(2, 4)):
-            page.mouse.move(random.randint(100, 1200), random.randint(100, 600))
-            time.sleep(random.uniform(0.15, 0.35))
-    except Exception as e:
-        log(f"⚠️ Mouse movement simulation failed: {e}")
-
-def human_click(page, locator):
-    """Moves the mouse smoothly to the element and clicks with realistic delay and offset"""
-    try:
-        if not locator.is_visible():
-            return False
-            
-        box = locator.bounding_box()
-        if not box:
-            locator.click()  # Fallback to direct click
-            return True
-            
-        # Target point with a small random offset from center
-        target_x = box['x'] + box['width'] / 2 + random.uniform(-10, 10)
-        target_y = box['y'] + box['height'] / 2 + random.uniform(-5, 5)
-        
-        # Start from a random position to simulate moving to the element
-        start_x = random.randint(100, 1000)
-        start_y = random.randint(100, 600)
-        
-        # Move in 6-12 small steps to simulate smooth motion
-        steps = random.randint(6, 12)
-        for i in range(1, steps + 1):
-            curr_x = start_x + (target_x - start_x) * (i / steps)
-            curr_y = start_y + (target_y - start_y) * (i / steps)
-            page.mouse.move(curr_x, curr_y)
-            time.sleep(random.uniform(0.015, 0.04))
-            
-        # Click with human press/release delay
-        page.mouse.click(target_x, target_y, delay=random.randint(80, 200))
-        return True
-    except Exception as e:
-        log(f"⚠️ Human click failed, falling back to locator.click(): {e}")
-        try:
-            locator.click(timeout=3000)
-            return True
-        except:
-            return False
-
-def generate_fake_video():
-    """Generate a tiny .y4m fake video file for Chrome's fake camera"""
-    fake_path = "/tmp/fake_camera.y4m"
-    if os.path.exists(fake_path):
-        return fake_path
-    try:
-        subprocess.run([
-            "ffmpeg", "-y", "-f", "lavfi", "-i",
-            "color=c=black:s=320x240:d=1:r=1",
-            "-pix_fmt", "yuv420p", fake_path
-        ], capture_output=True, timeout=10)
-        if os.path.exists(fake_path):
-            log("✅ Fake camera video file generated.")
-            return fake_path
-    except Exception as e:
-        log(f"⚠️ Could not generate fake video: {e}")
-    return None
-
-# ============================================
-# 🐙 GITHUB ACTION VARIABLE SYSTEM
-# ============================================
-def get_github_variable(var_name):
-    """Fetches a variable value from GitHub Repository Variables"""
-    if not GITHUB_TOKEN or not REPO_NAME:
-        return None
-    url = f"https://api.github.com/repos/{REPO_NAME}/actions/variables/{var_name}"
-    headers = {
-        "Authorization": f"Bearer {GITHUB_TOKEN}",
-        "Accept": "application/vnd.github+json"
-    }
-    try:
-        res = requests.get(url, headers=headers, timeout=10)
-        if res.status_code == 200:
-            return res.json().get("value", "")
-    except Exception as e:
-        log(f"⚠️ Error reading GitHub variable {var_name}: {e}")
-    return None
+            log(f"⚠️ Telegram update failed: {e}")
 
 def set_github_variable(var_name, value):
-    """Updates a variable value in GitHub Repository Variables"""
-    if not GITHUB_TOKEN or not REPO_NAME:
-        return False
+    if not GITHUB_TOKEN or not REPO_NAME: return False
     url = f"https://api.github.com/repos/{REPO_NAME}/actions/variables/{var_name}"
-    headers = {
-        "Authorization": f"Bearer {GITHUB_TOKEN}",
-        "Accept": "application/vnd.github+json"
-    }
+    headers = {"Authorization": f"Bearer {GITHUB_TOKEN}", "Accept": "application/vnd.github+json"}
     try:
         res = requests.patch(url, json={"name": var_name, "value": str(value)}, headers=headers, timeout=10)
-        if res.status_code == 204:
-            return True
+        return res.status_code == 204
     except Exception as e:
         log(f"⚠️ Error setting GitHub variable {var_name}: {e}")
     return False
@@ -178,785 +49,139 @@ cached_command_response = None
 cached_time = 0
 
 def get_command_flag(var_name):
-    """Fetches command flags directly from Render polling or falls back to GitHub Variables"""
     global cached_command_response, cached_time
     current_time = time.time()
-    
-    if RENDER_URL:
-        if cached_command_response is None or (current_time - cached_time) > 2:
-            try:
-                endpoint = RENDER_URL.rstrip('/') + '/api/command'
-                res = requests.get(endpoint, timeout=5)
-                if res.status_code == 200:
-                    cached_command_response = res.json()
-                    cached_time = current_time
-                else:
-                    cached_command_response = None
-            except Exception as e:
-                log(f"⚠️ Error polling Render command API: {e}")
-                cached_command_response = None
+    if RENDER_URL and (cached_command_response is None or (current_time - cached_time) > 3):
+        try:
+            res = requests.get(RENDER_URL.rstrip('/') + '/api/command', timeout=5)
+            if res.status_code == 200:
+                cached_command_response = res.json()
+                cached_time = current_time
+        except:
+            cached_command_response = None
 
     if cached_command_response:
         key = var_name.lower().replace("_flag", "")
         val = cached_command_response.get(key)
-        if val is not None:
-            return str(val)
+        if val is not None: return str(val)
 
-    return get_github_variable(var_name)
+    # Fallback to GitHub Variables
+    url = f"https://api.github.com/repos/{REPO_NAME}/actions/variables/{var_name}"
+    headers = {"Authorization": f"Bearer {GITHUB_TOKEN}", "Accept": "application/vnd.github+json"}
+    try:
+        res = requests.get(url, headers=headers, timeout=5)
+        if res.status_code == 200: return res.json().get("value", "0")
+    except: pass
+    return "0"
 
 # ============================================
-# 🎥 RECORDING CONTROL (FFMPEG)
+# 🎥 RECORDING CONTROL
 # ============================================
 ffmpeg_process = None
 
-def start_ffmpeg():
+def start_recording():
     global ffmpeg_process
-    if ffmpeg_process:
-        log("⚠️ FFmpeg is already running.")
-        return
-
-    log("🎥 Starting FFmpeg capture...")
+    if ffmpeg_process: return
+    log("🎥 Starting high-quality recording...")
     try:
-        # Command to capture video and audio
+        # Optimized for quality and low lag
         cmd = [
-            "ffmpeg", "-y", "-thread_queue_size", "1024",
-            "-f", "x11grab", "-video_size", "1366x768", "-framerate", "25", "-i", ":99",
-            "-thread_queue_size", "1024", "-f", "pulse", "-i", "default",
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
-            "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",
-            "-movflags", "+faststart", "output.mp4"
+            "ffmpeg", "-y", "-thread_queue_size", "4096",
+            "-f", "x11grab", "-video_size", "1366x768", "-framerate", "30", "-i", ":99",
+            "-f", "pulse", "-i", "default",
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "20",
+            "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
+            "output.mp4"
         ]
-        ffmpeg_process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        log(f"✅ FFmpeg started (PID: {ffmpeg_process.pid})")
+        ffmpeg_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        log(f"✅ Recording started (PID: {ffmpeg_process.pid})")
 
-        # Kill RDP services to save resources
-        log("🧹 Stopping RDP services to optimize performance...")
+        # Kill RDP for performance
+        log("🧹 Disabling RDP for performance...")
         subprocess.run("pkill -f websockify", shell=True)
         subprocess.run("pkill -f x11vnc", shell=True)
-        log("✅ RDP services terminated.")
-
+        send_telegram("⏺️ **Recording started.** RDP disabled to ensure smooth video.")
     except Exception as e:
-        log(f"❌ Failed to start FFmpeg: {e}")
+        log(f"❌ Failed to start recording: {e}")
 
-def stop_ffmpeg():
+def stop_recording():
     global ffmpeg_process
-    if not ffmpeg_process:
-        log("⚠️ No active FFmpeg process to stop.")
-        return
-
-    log("🛑 Stopping FFmpeg...")
+    if not ffmpeg_process: return
+    log("🛑 Stopping recording...")
     try:
-        ffmpeg_process.send_signal(subprocess.signal.SIGINT)
-        ffmpeg_process.wait(timeout=30)
-        log("✅ FFmpeg stopped successfully.")
-    except Exception as e:
-        log(f"⚠️ Error stopping FFmpeg: {e}")
-        if ffmpeg_process:
-            ffmpeg_process.kill()
+        ffmpeg_process.terminate()
+        ffmpeg_process.wait(timeout=20)
+        log("✅ Recording stopped.")
+        send_telegram("⏹️ **Recording stopped.** Processing file...")
+    except:
+        if ffmpeg_process: ffmpeg_process.kill()
     finally:
         ffmpeg_process = None
 
 # ============================================
-# 🧬 PLATFORM DETECTOR & FORMATTER
-# ============================================
-def get_platform(url):
-    url_lower = url.lower()
-    if "meet.google.com" in url_lower:
-        return "google"
-    elif "zoom.us" in url_lower:
-        return "zoom"
-    elif "teams.microsoft.com" in url_lower or "teams.live.com" in url_lower:
-        return "teams"
-    return "unknown"
-
-def format_zoom_url(url):
-    """Converts a standard Zoom join URL to a web client URL"""
-    if "zoom.us/j/" in url:
-        import re
-        match = re.search(r'/j/(\d+)', url)
-        if match:
-            meeting_id = match.group(1)
-            pwd = ""
-            if "pwd=" in url:
-                parts = url.split("pwd=")
-                if len(parts) > 1:
-                    pwd = parts[1].split("&")[0]
-            web_url = f"https://zoom.us/wc/{meeting_id}/join"
-            if pwd:
-                web_url += f"?pwd={pwd}"
-            log(f"🔄 Reformatted Zoom Join Link to Web client: {web_url}")
-            return web_url
-    return url
-
-# ============================================
-# 🚀 RESOURCE BLOCKER (Speed Boost)
-# ============================================
-BLOCKED_DOMAINS = [
-    "google-analytics.com",
-    "googletagmanager.com",
-    "doubleclick.net",
-    "facebook.net",
-    "connect.facebook.com",
-]
-
-def setup_resource_blocker(page):
-    """Block heavy non-essential resources to free up CPU"""
-    def handle_route(route):
-        url = route.request.url
-        
-        # Block tracking & analytics domains only (fonts/images allowed to prevent breaking UI initialization)
-        for domain in BLOCKED_DOMAINS:
-            if domain in url:
-                route.abort()
-                return
-        
-        route.continue_()
-    
-    page.route("**/*", handle_route)
-    log("🛡️ Resource blocker active (analytics domains blocked)")
-
-# ============================================
-# 🚀 GOOGLE MEET AUTOMATION (REWRITTEN)
-# ============================================
-def handle_google_consent(page, context, meet_url):
-    """Handle Google policies/consent pages that open in new tabs or redirect"""
-    # Check if current page is a policies/consent page
-    current_url = page.url.lower()
-    is_consent = any(x in current_url for x in ["policies.google.com", "consent.google", "accounts.google.com/TOS", "myaccount.google.com"])
-    
-    if is_consent:
-        log("📋 Google consent/policies page detected. Accepting...")
-        try:
-            # Try clicking any "I agree" or "Accept" buttons
-            page.evaluate("""
-                () => {
-                    let btns = [...document.querySelectorAll('button, a')];
-                    let acceptBtn = btns.find(b => {
-                        let txt = (b.innerText || '').toLowerCase();
-                        return txt.includes('agree') || txt.includes('accept') || txt.includes('i agree') || txt.includes('ok');
-                    });
-                    if (acceptBtn) acceptBtn.click();
-                }
-            """)
-            page.wait_for_timeout(2000)
-        except:
-            pass
-        
-        # Navigate back to Meet URL
-        log("🔄 Navigating back to Meet URL...")
-        page.goto(meet_url, wait_until="domcontentloaded", timeout=60000)
-        page.wait_for_timeout(3000)
-    
-    # Handle extra tabs that Google might open
-    all_pages = context.pages
-    if len(all_pages) > 1:
-        log(f"🔄 {len(all_pages)} tabs detected. Closing extra tabs...")
-        for p in all_pages:
-            p_url = p.url.lower()
-            if any(x in p_url for x in ["policies.google.com", "consent.google", "accounts.google", "about:blank"]):
-                try:
-                    p.close()
-                    log(f"   ✅ Closed tab: {p_url[:60]}")
-                except:
-                    pass
-        
-        # Make sure we're on the right page
-        remaining = context.pages
-        if remaining:
-            page = remaining[0]
-            if "meet.google.com" not in page.url.lower():
-                log("🔄 Re-navigating to Meet URL...")
-                page.goto(meet_url, wait_until="domcontentloaded", timeout=60000)
-                page.wait_for_timeout(3000)
-    
-    return page
-
-def automate_google_meet(page, url):
-    log("📡 Automating Google Meet...")
-    context = page.context
-    
-    # Block heavy resources before navigating
-    setup_resource_blocker(page)
-    
-    # Listen for new tabs/popups and auto-close unwanted ones
-    def on_new_page(new_page):
-        new_url = new_page.url.lower()
-        log(f"🔄 New tab detected: {new_url[:80]}")
-        if any(x in new_url for x in ["policies.google.com", "consent.google", "support.google"]):
-            try:
-                new_page.close()
-                log("   ✅ Closed unwanted popup tab.")
-            except:
-                pass
-    
-    context.on("page", on_new_page)
-    
-    for attempt in range(2):
-        log(f"🔄 Google Meet Join Attempt {attempt + 1}/2...")
-        if attempt > 0:
-            log("⚠️ First attempt did not enter call. Reloading page for a fresh retry...")
-            page.goto(url, wait_until="domcontentloaded", timeout=60000)
-            page.wait_for_timeout(3000)
-        else:
-            # Navigate using domcontentloaded (don't wait for all resources)
-            log("🌐 Loading Google Meet page...")
-            page.goto(url, wait_until="domcontentloaded", timeout=60000)
-            log("✅ DOM loaded. Waiting for Meet UI to initialize...")
-            page.wait_for_timeout(3000)
-            
-        # Handle Google consent/policies redirect
-        page = handle_google_consent(page, context, url)
-        
-        # Smart polling: wait for ANY interactive element with retries
-        max_wait = 120  # 2 minutes max
-        poll_interval = 3
-        elapsed = 0
-        element_found = False
-        
-        while elapsed < max_wait:
-            # Check if name input OR join button exists in DOM (even if not visible)
-            found = page.evaluate("""
-                () => {
-                    let input = document.querySelector('input[type="text"]');
-                    let joinBtn = [...document.querySelectorAll('button')].find(
-                        b => (b.innerText || '').match(/join|ask/i)
-                    );
-                    return {
-                        hasInput: !!input,
-                        hasJoin: !!joinBtn,
-                        inputPlaceholder: input ? (input.placeholder || 'Name Input') : '',
-                        joinText: joinBtn ? joinBtn.innerText.trim() : ''
-                    };
-                }
-            """)
-            
-            if found.get("hasInput") or found.get("hasJoin"):
-                log(f"✅ Meet UI detected! Input: {found.get('inputPlaceholder', 'N/A')}, Button: {found.get('joinText', 'N/A')}")
-                element_found = True
-                break
-            
-            log(f"⏳ Waiting for Meet UI... ({elapsed}s / {max_wait}s)")
-            page.wait_for_timeout(poll_interval * 1000)
-            elapsed += poll_interval
-        
-        if not element_found:
-            log("⚠️ Meet UI elements not found after 2 minutes. Attempting to proceed anyway...")
-        
-        page.wait_for_timeout(2000)
-        
-        # 1. Dismiss any dialogs (Got it, Dismiss, etc.)
-        log("🔄 Dismissing dialogs...")
-        page.evaluate("""
-            () => {
-                document.querySelectorAll('button').forEach(btn => {
-                    let txt = (btn.innerText || '').toLowerCase();
-                    if (txt.includes('got it') || txt.includes('dismiss') || txt.includes('i understand') || txt.includes('ok')) {
-                        btn.click();
-                    }
-                });
-            }
-        """)
-        page.wait_for_timeout(1000)
-        
-        # 2. Turn off mic and camera via keyboard shortcuts
-        log("🔇 Muting microphone & camera...")
-        # Try to locate and click mic/camera toggle buttons with human movements first
-        try:
-            mic_btn = page.locator('[aria-label*="microphone"], [data-tooltip*="microphone"]').first
-            if mic_btn.is_visible(timeout=3000):
-                human_click(page, mic_btn)
-                log("✅ Muted microphone via human click.")
-        except Exception as e:
-            log(f"⚠️ Mic click failed: {e}")
-            
-        try:
-            cam_btn = page.locator('[aria-label*="camera"], [data-tooltip*="camera"]').first
-            if cam_btn.is_visible(timeout=3000):
-                human_click(page, cam_btn)
-                log("✅ Muted camera via human click.")
-        except Exception as e:
-            log(f"⚠️ Camera click failed: {e}")
-            
-        # Keyboard shortcuts as fallback to ensure they are off
-        try:
-            page.click('body', timeout=2000)
-            page.keyboard.press("Control+d")
-            page.wait_for_timeout(500)
-            page.keyboard.press("Control+e")
-            page.wait_for_timeout(500)
-        except:
-            pass
-        page.wait_for_timeout(1000)
-        
-        # 3. Enter guest name and submit via Enter key
-        log("✍️ Entering display name...")
-        name_entered = False
-        
-        # Strategy A: Direct Playwright interaction
-        try:
-            name_input = page.locator('input[type="text"]').first
-            if name_input.is_visible(timeout=3000):
-                human_click(page, name_input)
-                name_input.fill("")
-                human_type(name_input, BOT_NAME)
-                name_entered = True
-                log("✅ Name typed via Playwright.")
-                page.wait_for_timeout(500)
-                name_input.press("Enter")
-                log("⌨️ Sent Enter key press on name input.")
-        except:
-            pass
-        
-        # Strategy B: JavaScript forced entry with React-compatible events
-        if not name_entered:
-            log("✍️ Trying JS name injection...")
-            result = page.evaluate("""
-                (botName) => {
-                    let inputs = document.querySelectorAll('input[type="text"]');
-                    for (let input of inputs) {
-                        // Use React's native input setter to bypass virtual DOM
-                        let nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-                            window.HTMLInputElement.prototype, 'value'
-                        ).set;
-                        nativeInputValueSetter.call(input, botName);
-                        input.dispatchEvent(new Event('input', { bubbles: true }));
-                        input.dispatchEvent(new Event('change', { bubbles: true }));
-                        input.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true }));
-                        input.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
-                        return true;
-                    }
-                    return false;
-                }
-            """, BOT_NAME)
-            if result:
-                name_entered = True
-                log("✅ Name injected via JS.")
-                page.wait_for_timeout(500)
-                page.keyboard.press("Enter")
-                log("⌨️ Sent Enter key press via keyboard.")
-            else:
-                log("⚠️ No text input found for name.")
-        
-        # 4. Verify if we successfully initiated join or are in/waiting
-        page.wait_for_timeout(5000)
-        
-        # Check if name input is still present (if it's gone, we successfully left lobby!)
-        lobby_still_visible = page.evaluate("""
-            () => {
-                let input = document.querySelector('input[type="text"]');
-                return !!(input && (input.offsetWidth > 0 || input.offsetHeight > 0));
-            }
-        """)
-        
-        if not lobby_still_visible:
-            log("🎯 Successfully joined or initiated join (lobby name input is gone!).")
-            break
-        else:
-            log("⚠️ Lobby name input is still visible. Join request might have failed or been blocked.")
-            
-    return page
-
-# ============================================
-# 🚀 ZOOM AUTOMATION
-# ============================================
-def automate_zoom(page, url):
-    log("📡 Automating Zoom...")
-    target_url = format_zoom_url(url)
-    page.goto(target_url, wait_until="domcontentloaded", timeout=60000)
-    page.wait_for_timeout(10000)
-
-    # Handle Cookies & TOS
-    log("🔄 Managing Cookie consents...")
-    try:
-        cookie_btn = page.locator('#onetrust-accept-btn-handler').first
-        if cookie_btn.is_visible(timeout=3000):
-            cookie_btn.click()
-            log("✅ Cookies accepted.")
-    except:
-        pass
-
-    try:
-        agree_btn = page.locator('#wc_agree1').first
-        if agree_btn.is_visible(timeout=3000):
-            agree_btn.click()
-            log("✅ Zoom Terms agreed.")
-    except:
-        pass
-
-    # Turn off Microphone
-    log("🔇 Muting audio pre-join...")
-    try:
-        mute_btn = page.locator('#preview-audio-control-button').first
-        if mute_btn.is_visible(timeout=3000):
-            mute_btn.click()
-            log("✅ Muted.")
-    except Exception as e:
-        log(f"ℹ️ Pre-join mute skipped: {e}")
-
-    # Turn off Camera
-    log("📹 Turning off camera pre-join...")
-    try:
-        cam_btn = page.locator('#preview-video-control-button').first
-        if cam_btn.is_visible(timeout=3000):
-            cam_btn.click()
-            log("✅ Camera turned off.")
-    except Exception as e:
-        log(f"ℹ️ Pre-join camera off skipped: {e}")
-
-    # Enter Name
-    try:
-        name_input = page.locator('#input-for-name').first
-        if name_input.is_visible(timeout=3000):
-            human_type(name_input, BOT_NAME)
-            page.wait_for_timeout(1000)
-    except Exception as e:
-        log(f"⚠️ Could not find Zoom name input: {e}")
-
-    # Click Join
-    log("⏳ Joining Zoom Session...")
-    human_mouse_move(page)
-    try:
-        join_btn = page.locator('button.zm-btn.preview-join-button').first
-        if join_btn.is_visible(timeout=3000):
-            join_btn.click()
-            log("✅ Clicked Zoom join.")
-            page.wait_for_timeout(5000)
-    except Exception as e:
-        log(f"❌ Failed to click Zoom join: {e}")
-
-    # Join Audio by Computer inside meeting
-    try:
-        audio_computer = page.locator('button:has-text("Join Audio by Computer")').first
-        if audio_computer.is_visible(timeout=10000):
-            audio_computer.click()
-            log("✅ Joined Audio by Computer successfully.")
-    except:
-        pass
-
-# ============================================
-# 🚀 TEAMS AUTOMATION
-# ============================================
-def automate_teams(page, url):
-    log("📡 Automating Microsoft Teams...")
-    page.goto(url, wait_until="domcontentloaded", timeout=60000)
-    page.wait_for_timeout(10000)
-
-    # 1. Fill Name
-    try:
-        name_input = page.locator('[data-tid="prejoin-display-name-input"]').first
-        if name_input.is_visible(timeout=5000):
-            human_type(name_input, BOT_NAME)
-            page.wait_for_timeout(1000)
-    except Exception as e:
-        log(f"⚠️ Teams name input not found: {e}")
-
-    # 2. Mute Mic
-    try:
-        mute_btn = page.locator('[data-tid="toggle-mute"]').first
-        if mute_btn.is_visible(timeout=3000):
-            mute_btn.click()
-            log("✅ Teams audio muted.")
-            page.wait_for_timeout(1000)
-    except:
-        pass
-
-    # 3. Join
-    try:
-        join_btn = page.locator('[data-tid="prejoin-join-button"]').first
-        if join_btn.is_visible(timeout=3000):
-            human_mouse_move(page)
-            join_btn.click()
-            log("✅ Clicked Teams Join Button.")
-    except Exception as e:
-        log(f"❌ Failed to join Teams: {e}")
-
-# ============================================
-# 🔄 MAIN LOOP & EVENT MONITOR
+# 🚀 MAIN BOT LOGIC
 # ============================================
 def run_bot():
     if not MEET_URL:
-        log("❌ Error: MEET_URL env var is missing!")
+        log("❌ Error: MEET_URL is missing!")
         return
 
-    platform = get_platform(MEET_URL)
-    log(f"📡 Target platform detected: {platform.upper()}")
-    
-    send_telegram(f"🚀 **Bot Started**\n📡 Platform: `{platform.upper()}`\n🔗 URL: `{MEET_URL}`")
-
-    # Generate fake camera video file
-    fake_video = generate_fake_video()
+    send_telegram(f"🚀 **Runner Active**\n🔗 Meeting: `{MEET_URL}`\n\n*Waiting for your manual join via RDP or /record command...*")
 
     with sync_playwright() as p:
-        log("🌐 Launching Playwright Chromium Browser...")
-        
-        # Build launch args
-        launch_args = [
-            "--incognito",
-            "--use-fake-ui-for-media-stream",
-            "--use-fake-device-for-media-stream",
-            "--disable-blink-features=AutomationControlled",
-            "--window-size=1366,768",
-            "--no-sandbox",
-            "--disable-setuid-sandbox",
-            "--disable-dev-shm-usage",
-            "--enable-unsafe-swiftshader",
-            "--use-gl=angle",
-            "--use-angle=swiftshader",
-            "--disable-background-timer-throttling",
-            "--disable-backgrounding-occluded-windows",
-            "--disable-renderer-backgrounding",
-            "--autoplay-policy=no-user-gesture-required",
-        ]
-        
-        # If fake video exists, use it for camera
-        if fake_video:
-            launch_args.append(f"--use-file-for-fake-video-capture={fake_video}")
-        
-        browser = p.chromium.launch(
-            headless=False,
-            args=launch_args
-        )
-
-        context = browser.new_context(
-            viewport={'width': 1366, 'height': 768},
-            permissions=['camera', 'microphone'],
-            user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            extra_http_headers={
-                "sec-ch-ua": '"Chromium";v="122", "Google Chrome";v="122", "Not/A)Brand";v="99"',
-                "sec-ch-ua-mobile": "?0",
-                "sec-ch-ua-platform": '"Linux"'
-            },
-            locale="en-US",
-            timezone_id="UTC"
-        )
-        
-        # Inject media overrides + webdriver spoof BEFORE any page loads
-        context.add_init_script("""
-            // 1. Spoof webdriver
-            try {
-                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-            } catch (e) {}
-
-            // Helper to generate a fully synthetic media stream instantly
-            function createFakeStream(constraints) {
-                const tracks = [];
-                const needVideo = !constraints || constraints.video !== false;
-                const needAudio = !constraints || constraints.audio !== false;
-
-                if (needVideo) {
-                    try {
-                        const canvas = document.createElement('canvas');
-                        canvas.width = 640;
-                        canvas.height = 480;
-                        const ctx = canvas.getContext('2d');
-                        ctx.fillStyle = '#111111';
-                        ctx.fillRect(0, 0, 640, 480);
-                        
-                        let x = 0;
-                        setInterval(() => {
-                            try {
-                                ctx.fillStyle = '#111111';
-                                ctx.fillRect(0, 0, 640, 480);
-                                ctx.fillStyle = '#34a853'; // Google Green
-                                ctx.fillRect(x, 220, 40, 40);
-                                ctx.fillStyle = '#ffffff';
-                                ctx.font = '20px Arial';
-                                ctx.fillText('Recording Bot Active', 50, 50);
-                                x = (x + 8) % 640;
-                            } catch(e) {}
-                        }, 100);
-                        
-                        const videoStream = canvas.captureStream(15);
-                        const videoTrack = videoStream.getVideoTracks()[0];
-                        if (videoTrack) {
-                            tracks.push(videoTrack);
-                        }
-                    } catch(e) {
-                        console.error("Failed to create fake video track:", e);
-                    }
-                }
-
-                if (needAudio) {
-                    try {
-                        const ac = new (window.AudioContext || window.webkitAudioContext)();
-                        const dest = ac.createMediaStreamDestination();
-                        const audioTrack = dest.stream.getAudioTracks()[0];
-                        if (audioTrack) {
-                            tracks.push(audioTrack);
-                        }
-                        
-                        const resume = () => {
-                            if (ac.state === 'suspended') ac.resume();
-                        };
-                        document.addEventListener('click', resume, { once: true });
-                        document.addEventListener('keydown', resume, { once: true });
-                    } catch(e) {
-                        console.error("Failed to create fake audio track:", e);
-                    }
-                }
-
-                return new MediaStream(tracks);
-            }
-
-            // 2. Mock getUserMedia completely to bypass hardware/OS dependencies
-            const mockGetUserMedia = function(constraints) {
-                return Promise.resolve(createFakeStream(constraints));
-            };
-
-            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-                navigator.mediaDevices.getUserMedia = mockGetUserMedia;
-            }
-            if (window.MediaDevices && window.MediaDevices.prototype && window.MediaDevices.prototype.getUserMedia) {
-                window.MediaDevices.prototype.getUserMedia = mockGetUserMedia;
-            }
-
-            const mockLegacyGUM = function(constraints, success, error) {
-                const stream = createFakeStream(constraints);
-                if (typeof success === 'function') {
-                    setTimeout(() => success(stream), 10);
-                }
-                return Promise.resolve(stream);
-            };
-
-            if (navigator.getUserMedia) navigator.getUserMedia = mockLegacyGUM;
-            if (navigator.webkitGetUserMedia) navigator.webkitGetUserMedia = mockLegacyGUM;
-            if (navigator.mozGetUserMedia) navigator.mozGetUserMedia = mockLegacyGUM;
-
-            // 3. Override enumerateDevices to always return fake devices instantly
-            if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
-                navigator.mediaDevices.enumerateDevices = function() {
-                    const devices = [
-                        { deviceId: 'default', kind: 'audioinput', label: 'Realtek High Definition Audio Microphone', groupId: 'default-group' },
-                        { deviceId: 'webcam-camera', kind: 'videoinput', label: 'Integrated Webcam (HD)', groupId: 'default-group' },
-                        { deviceId: 'default-output', kind: 'audiooutput', label: 'Realtek Speakers (Default)', groupId: 'default-group' }
-                    ];
-                    return Promise.resolve(devices.map(d => {
-                        const mockDevice = Object.create(MediaDeviceInfo.prototype);
-                        Object.defineProperties(mockDevice, {
-                            deviceId: { value: d.deviceId, enumerable: true },
-                            kind: { value: d.kind, enumerable: true },
-                            label: { value: d.label, enumerable: true },
-                            groupId: { value: d.groupId, enumerable: true }
-                        });
-                        return mockDevice;
-                    }));
-                };
-            }
-
-            if (window.MediaDevices && window.MediaDevices.prototype && window.MediaDevices.prototype.enumerateDevices) {
-                window.MediaDevices.prototype.enumerateDevices = navigator.mediaDevices.enumerateDevices;
-            }
-
-            // 4. Mock Permissions API to auto-grant camera and microphone checks
-            if (navigator.permissions && navigator.permissions.query) {
-                const _origQuery = navigator.permissions.query.bind(navigator.permissions);
-                navigator.permissions.query = function(descriptor) {
-                    if (descriptor && (descriptor.name === 'camera' || descriptor.name === 'microphone')) {
-                        const mockStatus = {};
-                        try {
-                            Object.setPrototypeOf(mockStatus, PermissionStatus.prototype);
-                        } catch (e) {
-                            try {
-                                Object.setPrototypeOf(mockStatus, EventTarget.prototype);
-                            } catch (err) {}
-                        }
-                        Object.defineProperties(mockStatus, {
-                            state: { value: 'granted', enumerable: true },
-                            status: { value: 'granted', enumerable: true },
-                            onchange: { value: null, writable: true, enumerable: true }
-                        });
-                        mockStatus.addEventListener = mockStatus.addEventListener || function() {};
-                        mockStatus.removeEventListener = mockStatus.removeEventListener || function() {};
-                        mockStatus.dispatchEvent = mockStatus.dispatchEvent || function() { return true; };
-                        
-                        return Promise.resolve(mockStatus);
-                    }
-                    return _origQuery(descriptor);
-                };
-            }
-        """)
-        
+        browser = p.chromium.launch(headless=False, args=[
+            "--no-sandbox", "--disable-setuid-sandbox", "--use-fake-ui-for-media-stream",
+            "--use-fake-device-for-media-stream", "--window-size=1366,768"
+        ])
+        context = browser.new_context(viewport={'width': 1366, 'height': 768}, permissions=['camera', 'microphone'])
+        stealth_sync(context.new_page()) # Just to apply stealth to the context
         page = context.new_page()
         
-        # Apply Stealth Plugin overrides
-        stealth_sync(page)
+        log(f"🌐 Navigating to: {MEET_URL}")
+        page.goto(MEET_URL, timeout=60000)
 
-        # Execute platform automation
-        if platform == "google":
-            page = automate_google_meet(page, MEET_URL)
-        elif platform == "zoom":
-            automate_zoom(page, MEET_URL)
-        elif platform == "teams":
-            automate_teams(page, MEET_URL)
-        else:
-            log("📡 Generic browser load for unknown platform...")
-            page.goto(MEET_URL, timeout=60000)
-
-        # Notify Telegram we are inside
-        send_telegram(f"✅ **Session Joined Successfully!**\n🎥 Recording is now active.")
-
-        # Monitoring Loop
-        log("🔄 Monitoring meeting status & GitHub flags...")
-        start_time = time.time()
-        max_time = 18000 # 5 Hours max safety
         recording_active = False
+        start_time = time.time()
 
-        while time.time() - start_time < max_time:
-            # 1. Check STOP_FLAG
+        while time.time() - start_time < 18000: # 5 hour limit
+            # Check Commands
             stop_val = get_command_flag("STOP_FLAG")
             if stop_val == "1":
-                log("🛑 STOP_FLAG detected! Exiting bot.")
-                if recording_active:
-                    stop_ffmpeg()
-                send_telegram("🛑 **Stop Command Received.** Finishing recording...")
+                log("🛑 Stop command received.")
                 break
 
-            # 2. Check REC_FLAG
             rec_val = get_command_flag("REC_FLAG")
             if rec_val == "1" and not recording_active:
-                log("⏺️ REC_FLAG (ON) detected!")
-                start_ffmpeg()
+                start_recording()
                 recording_active = True
-                send_telegram("⏺️ **Recording started.** RDP disabled for performance.")
             elif rec_val == "0" and recording_active:
-                log("⏹️ REC_FLAG (OFF) detected!")
-                stop_ffmpeg()
+                stop_recording()
                 recording_active = False
-                send_telegram("⏹️ **Recording stopped.** File is being finalized.")
 
-            # 3. Check VIEW_FLAG (Live Screenshot)
             view_val = get_command_flag("VIEW_FLAG")
             if view_val == "1":
-                log("📸 VIEW_FLAG detected! Capturing screenshot...")
                 try:
-                    screenshot_path = "live_view.png"
-                    page.screenshot(path=screenshot_path)
-                    send_telegram_photo(screenshot_path, f"📸 **Live view at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}**")
-                    if os.path.exists(screenshot_path):
-                        os.remove(screenshot_path)
-                except Exception as e:
-                    log(f"⚠️ Screenshot capture failed: {e}")
-                finally:
-                    set_github_variable("VIEW_FLAG", "0")
+                    path = "view.png"
+                    page.screenshot(path=path)
+                    with open(path, 'rb') as f:
+                        requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto", data={'chat_id': CHAT_ID}, files={'photo': f})
+                    os.remove(path)
+                except: pass
+                set_github_variable("VIEW_FLAG", "0")
 
-            # 3. Check FULL_FLAG (Toggle Fullscreen)
             full_val = get_command_flag("FULL_FLAG")
             if full_val == "1":
-                log("📺 FULL_FLAG detected! Toggling Fullscreen...")
                 try:
-                    page.evaluate("document.documentElement.requestFullscreen().catch(() => {})")
-                    send_telegram("📺 **Display mode set to Full Screen.**")
-                except Exception as e:
-                    log(f"⚠️ Fullscreen toggle failed: {e}")
-                finally:
-                    set_github_variable("FULL_FLAG", "0")
+                    page.evaluate("document.documentElement.requestFullscreen()")
+                    send_telegram("📺 Fullscreen requested.")
+                except: pass
+                set_github_variable("FULL_FLAG", "0")
 
-            # Sleep before next check
-            time.sleep(10)
+            time.sleep(5)
 
-        log("🧹 Closing browser context...")
+        if recording_active: stop_recording()
         browser.close()
-        log("🏁 Bot closed successfully.")
+        send_telegram("🏁 **Session Ended.** Runner closing.")
 
 if __name__ == "__main__":
     run_bot()
