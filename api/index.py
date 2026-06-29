@@ -6,6 +6,7 @@ import telebot
 from flask import Flask
 from datetime import datetime
 import logging
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # ==========================================
 # ⚙️ LOGGING SETUP
@@ -140,6 +141,16 @@ def get_workflow_status():
 # 🤖 TELEGRAM BOT COMMANDS
 # ==========================================
 
+def get_main_keyboard():
+    markup = InlineKeyboardMarkup()
+    markup.row(InlineKeyboardButton("📊 Status", callback_data="cb_status"),
+               InlineKeyboardButton("📸 Screenshot", callback_data="cb_vew"))
+    markup.row(InlineKeyboardButton("⏺️ Start Rec", callback_data="cb_rec_on"),
+               InlineKeyboardButton("⏹️ Stop Rec", callback_data="cb_rec_off"))
+    markup.row(InlineKeyboardButton("🛑 Stop Bot", callback_data="cb_off"),
+               InlineKeyboardButton("📺 Fullscreen", callback_data="cb_full"))
+    return markup
+
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
     if not is_authorized(message):
@@ -147,24 +158,15 @@ def send_welcome(message):
     
     user = message.from_user
     welcome_text = (
-        "🛡️ **Multi-Platform Meeting Recorder Bot**\n"
+        "🛡️ **Advanced Meeting Recorder Bot**\n"
         "━━━━━━━━━━━━━━━━━━━━━\n"
         f"👤 Welcome, {user.first_name}!\n\n"
-        "**📋 Available Commands:**\n"
-        "🚀 `/go <meeting_url>` - Start session & get RDP link\n"
-        "⏺️ `/rec_on` - Start recording manually\n"
-        "⏹️ `/rec_off` - Stop recording & upload\n"
-        "🛑 `/off` - Full stop (Stop recording & close runner)\n"
-        "📸 `/vew` - Take live screenshot\n"
-        "📺 `/full` - Request fullscreen mode\n"
-        "📊 `/status` - Check current status\n"
-        "⚡ `/cancel` - Stop ongoing operation instantly\n\n"
-        "**📌 Examples:**\n"
-        "• `/go https://meet.google.com/abc-defg-hij`\n"
-        "• `/go https://zoom.us/j/123456789?pwd=xxxx`\n"
-        "• `/go https://teams.microsoft.com/l/meetup-join/...`"
+        "**🚀 Quick Start:**\n"
+        "Type `/go <url>` to launch the browser.\n\n"
+        "**📋 Interactive Controls:**\n"
+        "Use the buttons below to control the bot once it's running."
     )
-    bot.reply_to(message, welcome_text, parse_mode="Markdown")
+    bot.reply_to(message, welcome_text, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
 @bot.message_handler(commands=['status'])
 def check_status(message):
@@ -184,7 +186,7 @@ def check_status(message):
         status_msg += "💤 **System Idle / Offline**\n"
         status_msg += "📌 Ready to start a new recording session."
     
-    bot.reply_to(message, status_msg, parse_mode="Markdown")
+    bot.reply_to(message, status_msg, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
 @bot.message_handler(commands=['go'])
 def start_recording(message):
@@ -229,7 +231,7 @@ def start_recording(message):
         if details:
             status_msg += f"\n\n🆔 Run ID: `{details['id']}`"
         
-        bot.reply_to(message, status_msg, parse_mode="Markdown")
+        bot.reply_to(message, status_msg, parse_mode="Markdown", reply_markup=get_main_keyboard())
         return
 
     # Start recording process
@@ -275,18 +277,14 @@ def start_recording(message):
         
         if res.status_code == 204:
             bot.edit_message_text(
-                f"✅ **Recording Started Successfully**\n━━━━━━━━━━━━━━━━━━━━━\n"
+                f"✅ **Runner Started Successfully**\n━━━━━━━━━━━━━━━━━━━━━\n"
                 f"📡 URL: `{meet_url}`\n"
-                f"🟢 Status: Active\n"
-                f"⏱️ Max duration: 5 hours\n\n"
-                f"**📋 Controls:**\n"
-                f"🛑 `/off` - Stop recording\n"
-                f"📸 `/vew` - Take live screenshot\n"
-                f"📺 `/full` - Toggle full screen\n"
-                f"📊 `/status` - Check runner status",
+                f"🟢 Status: Initializing...\n\n"
+                f"**You will receive the RDP link shortly.**",
                 chat_id=message.chat.id,
                 message_id=progress_msg.message_id,
-                parse_mode="Markdown"
+                parse_mode="Markdown",
+                reply_markup=get_main_keyboard()
             )
         else:
             bot.edit_message_text(
@@ -302,116 +300,123 @@ def start_recording(message):
         logger.error(f"Error starting workflow: {e}")
         bot.edit_message_text(
             f"❌ **Connection Error**\n━━━━━━━━━━━━━━━━━━━━━\n"
-            f"Unable to connect to GitHub Actions REST API.\n"
-            f"Please verify your credentials and try again.",
+            f"Unable to connect to GitHub Actions REST API.",
             chat_id=message.chat.id,
             message_id=progress_msg.message_id,
             parse_mode="Markdown"
         )
 
 @bot.message_handler(commands=['off'])
-def stop_recording(message):
+def stop_recording_cmd(message):
     if not is_authorized(message):
         return
-    
-    if not is_workflow_running():
-        bot.reply_to(
-            message,
-            "💤 **No Active Recording**\nThere is no recording session running currently.",
-            parse_mode="Markdown"
-        )
-        return
-    
-    progress_msg = bot.reply_to(
-        message,
-        "🛑 **Stopping Recording**\n━━━━━━━━━━━━━━━━━━━━━\n"
-        "⏳ Sending halt command to runner...\n"
-        "⏱️ Finalizing media fragments & uploading to Telegram (takes up to 2-3 mins)...",
-        parse_mode="Markdown"
-    )
-    
-    global stop_flag
-    stop_flag = "1"
-    create_or_update_github_variable("STOP_FLAG", "1")
-    
-    time.sleep(5)
-    bot.edit_message_text(
-        "✅ **Stop Signal Sent Successfully**\n━━━━━━━━━━━━━━━━━━━━━\n"
-        "🔄 Processing video segment files.\n"
-        "📥 You will receive the files directly here shortly.",
-        chat_id=message.chat.id,
-        message_id=progress_msg.message_id,
-        parse_mode="Markdown"
-    )
+    handle_stop_bot(message.chat.id)
 
 @bot.message_handler(commands=['vew'])
-def live_view(message):
+def live_view_cmd(message):
     if not is_authorized(message):
         return
-        
-    if not is_workflow_running():
-        bot.reply_to(
-            message,
-            "💤 **No Active Recording**\nCannot capture screenshot without an active session.",
-            parse_mode="Markdown"
-        )
+    handle_live_view(message.chat.id)
+
+@bot.message_handler(commands=['full'])
+def full_screen_cmd(message):
+    if not is_authorized(message):
         return
-        
-    bot.reply_to(
-        message,
-        "📸 **Screenshot Capture Signal Sent**\n━━━━━━━━━━━━━━━━━━━━━\n"
-        "⏳ Taking screenshot on runner...\n"
-        "📤 You will receive the photo here in a few seconds.",
-        parse_mode="Markdown"
-    )
+    handle_full_screen(message.chat.id)
+
+@bot.message_handler(commands=['rec_on', 'record'])
+def start_rec_cmd(message):
+    if not is_authorized(message):
+        return
+    handle_rec_on(message.chat.id)
+
+@bot.message_handler(commands=['rec_off'])
+def stop_rec_cmd(message):
+    if not is_authorized(message):
+        return
+    handle_rec_off(message.chat.id)
+
+@bot.message_handler(commands=['cancel'])
+def cancel_cmd(message):
+    if not is_authorized(message):
+        return
+    handle_stop_bot(message.chat.id)
+
+# ==========================================
+# 🛠️ CALLBACK HANDLERS
+# ==========================================
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('cb_'))
+def callback_handler(call):
+    if not is_authorized(call.message):
+        return
+    
+    action = call.data.replace('cb_', '')
+    chat_id = call.message.chat.id
+    
+    if action == "status":
+        check_status(call.message)
+    elif action == "vew":
+        handle_live_view(chat_id)
+    elif action == "rec_on":
+        handle_rec_on(chat_id)
+    elif action == "rec_off":
+        handle_rec_off(chat_id)
+    elif action == "off":
+        handle_stop_bot(chat_id)
+    elif action == "full":
+        handle_full_screen(chat_id)
+    
+    bot.answer_callback_query(call.id)
+
+# ==========================================
+# ⚙️ LOGIC WRAPPERS
+# ==========================================
+
+def handle_live_view(chat_id):
+    if not is_workflow_running():
+        bot.send_message(chat_id, "💤 **No Active Session**", parse_mode="Markdown")
+        return
+    bot.send_message(chat_id, "📸 **Capturing Live View...**", parse_mode="Markdown")
     global view_flag
     view_flag = "1"
     create_or_update_github_variable("VIEW_FLAG", "1")
 
-@bot.message_handler(commands=['full'])
-def full_screen(message):
-    if not is_authorized(message):
-        return
-        
+def handle_rec_on(chat_id):
     if not is_workflow_running():
-        bot.reply_to(
-            message,
-            "💤 **No Active Recording**\nCannot change display mode without an active session.",
-            parse_mode="Markdown"
-        )
+        bot.send_message(chat_id, "💤 **No Active Session**", parse_mode="Markdown")
         return
-        
-    bot.reply_to(
-        message,
-        "📺 **Fullscreen Command Sent**\n━━━━━━━━━━━━━━━━━━━━━\n"
-        "✅ Requesting fullscreen mode on the runner page.",
-        parse_mode="Markdown"
-    )
+    global rec_flag
+    rec_flag = "1"
+    create_or_update_github_variable("REC_FLAG", "1")
+    bot.send_message(chat_id, "⏺️ **Recording Signal Sent.** RDP will be closed for speed.", parse_mode="Markdown")
+
+def handle_rec_off(chat_id):
+    if not is_workflow_running():
+        bot.send_message(chat_id, "💤 **No Active Session**", parse_mode="Markdown")
+        return
+    global rec_flag
+    rec_flag = "0"
+    create_or_update_github_variable("REC_FLAG", "0")
+    bot.send_message(chat_id, "⏹️ **Stopping Recording...** Finalizing file.", parse_mode="Markdown")
+
+def handle_stop_bot(chat_id):
+    if not is_workflow_running():
+        bot.send_message(chat_id, "💤 **No Active Session**", parse_mode="Markdown")
+        return
+    bot.send_message(chat_id, "🛑 **Stopping Bot & Runner...**", parse_mode="Markdown")
+    global stop_flag
+    stop_flag = "1"
+    create_or_update_github_variable("STOP_FLAG", "1")
+
+def handle_full_screen(chat_id):
+    if not is_workflow_running():
+        bot.send_message(chat_id, "💤 **No Active Session**", parse_mode="Markdown")
+        return
+    bot.send_message(chat_id, "📺 **Requesting Fullscreen...**", parse_mode="Markdown")
     global full_flag
     full_flag = "1"
     create_or_update_github_variable("FULL_FLAG", "1")
-
-@bot.message_handler(commands=['cancel'])
-def cancel_operation(message):
-    if not is_authorized(message):
-        return
-        
-    if is_workflow_running():
-        bot.reply_to(
-            message,
-            "⚡ **Emergency Cancel**\n━━━━━━━━━━━━━━━━━━━━━\n"
-            "🛑 Halting all operations and shutting down runner...",
-            parse_mode="Markdown"
-        )
-        global stop_flag
-        stop_flag = "1"
-        create_or_update_github_variable("STOP_FLAG", "1")
-    else:
-        bot.reply_to(
-            message,
-            "💤 **No Operation Running**\nNothing to cancel.",
-            parse_mode="Markdown"
-        )
 
 # ==========================================
 # 🌐 FLASK WEB SERVER
@@ -421,23 +426,40 @@ def cancel_operation(message):
 def index():
     return """
     <!DOCTYPE html>
-    <html>
+    <html lang="en">
     <head>
-        <title>Meeting Recorder Controller</title>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Meeting Recorder | Dashboard</title>
         <style>
-            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0c0f12; color: #e2ebf0; text-align: center; padding: 50px; margin: 0; }
-            .status { background: #151b22; padding: 40px; border-radius: 12px; max-width: 600px; margin: 50px auto; box-shadow: 0 4px 20px rgba(0,0,0,0.4); border: 1px solid #30363d; }
-            .online { color: #58a6ff; font-size: 28px; font-weight: bold; margin: 20px 0; }
-            .detail { color: #8b949e; margin: 12px 0; font-size: 16px; }
-            h1 { color: #f0f6fc; margin-bottom: 5px; }
+            :root {
+                --bg: #0d1117;
+                --panel: #161b22;
+                --border: #30363d;
+                --text: #c9d1d9;
+                --accent: #58a6ff;
+                --green: #238636;
+            }
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; background: var(--bg); color: var(--text); display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+            .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 40px; width: 100%; max-width: 450px; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+            h1 { font-size: 24px; margin-bottom: 8px; color: #fff; }
+            p { color: #8b949e; margin-bottom: 24px; }
+            .status-badge { display: inline-flex; align-items: center; background: rgba(35, 134, 54, 0.15); color: #3fb950; padding: 6px 12px; border-radius: 20px; font-weight: 600; font-size: 14px; border: 1px solid rgba(63, 185, 80, 0.3); }
+            .footer { margin-top: 30px; font-size: 12px; color: #484f58; }
+            .dot { height: 8px; width: 8px; background-color: #3fb950; border-radius: 50%; display: inline-block; margin-right: 8px; animation: pulse 2s infinite; }
+            @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.4; } 100% { opacity: 1; } }
         </style>
     </head>
     <body>
-        <div class="status">
-            <h1>🛡️ Cloud Recorder Controller</h1>
-            <div class="online">🟢 Web Interface Online</div>
-            <div class="detail">Telegram controller is active and polling.</div>
-            <div class="detail">🎯 Control is managed exclusively via the authorized Telegram chat.</div>
+        <div class="card">
+            <h1>🛡️ Bot Controller</h1>
+            <p>Cloud Meeting Recorder is active</p>
+            <div class="status-badge">
+                <span class="dot"></span> Web Interface Online
+            </div>
+            <div class="footer">
+                Managed via Authorized Telegram Account
+            </div>
         </div>
     </body>
     </html>
@@ -448,35 +470,8 @@ def health_check():
     return {
         "status": "online",
         "timestamp": datetime.now().isoformat(),
-        "recording": is_workflow_running(),
-        "authorized_group": ALLOWED_GROUP_ID or "all"
+        "recording": is_workflow_running()
     }
-
-@bot.message_handler(commands=['rec_on'])
-def start_rec_command(message):
-    if not is_authorized(message):
-        return
-    if not is_workflow_running():
-        bot.reply_to(message, "💤 **No Active Session**\nStart a session with `/go` first.", parse_mode="Markdown")
-        return
-
-    global rec_flag
-    rec_flag = "1"
-    create_or_update_github_variable("REC_FLAG", "1")
-    bot.reply_to(message, "⏺️ **Recording Signal Sent**\nFFmpeg is starting and RDP will be disabled for performance.", parse_mode="Markdown")
-
-@bot.message_handler(commands=['rec_off'])
-def stop_rec_command(message):
-    if not is_authorized(message):
-        return
-    if not is_workflow_running():
-        bot.reply_to(message, "💤 **No Active Session**", parse_mode="Markdown")
-        return
-
-    global rec_flag
-    rec_flag = "0"
-    create_or_update_github_variable("REC_FLAG", "0")
-    bot.reply_to(message, "⏹️ **Stop Recording Signal Sent**\nFinalizing video file...", parse_mode="Markdown")
 
 @app.route('/api/command')
 def get_command():
