@@ -229,15 +229,41 @@ def automate_google_meet(page, url):
     except Exception as e:
         log(f"⚠️ Could not use shortcuts: {e}")
 
-    # 3. Enter Guest Name like a human
+    # 3. Enter Guest Name
+    name_entered = False
     try:
         name_input = page.locator('input[type="text"]').first
         if name_input.is_visible(timeout=5000):
             log("✍️ Typing display name...")
             human_type(name_input, BOT_NAME)
+            name_entered = True
             page.wait_for_timeout(1000)
     except Exception as e:
-        log(f"ℹ️ No guest name text input found or failed to fill: {e}")
+        log(f"ℹ️ Standard guest name entry skipped or failed: {e}")
+
+    # Fallback to JavaScript if standard entry was skipped or failed
+    if not name_entered:
+        log("✍️ Attempting JavaScript forced name entry...")
+        try:
+            res = page.evaluate(f"""
+                (bot_name) => {{
+                    let input = document.querySelector('input[type="text"]');
+                    if (input) {{
+                        input.value = bot_name;
+                        input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                        input.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                        return true;
+                    }}
+                    return false;
+                }}
+            """, BOT_NAME)
+            if res:
+                log("✅ Name entered using JS.")
+                page.wait_for_timeout(2000)
+            else:
+                log("⚠️ JS could not find the guest name input field.")
+        except Exception as e:
+            log(f"⚠️ JavaScript name entry failed: {e}")
 
     # 4. Join the meeting
     log("⏳ Attempting to Join Google Meet call...")
@@ -259,7 +285,9 @@ def automate_google_meet(page, url):
     if not joined:
         log("⚠️ Trying JavaScript forced join...")
         try:
-            page.evaluate("""
+            # Let's add a small wait to ensure button is enabled after input event
+            page.wait_for_timeout(2000)
+            res = page.evaluate("""
                 () => {
                     let btns = [...document.querySelectorAll('button')];
                     let jBtn = btns.find(b => b.innerText.includes('Join') || b.innerText.includes('Ask'));
@@ -270,10 +298,16 @@ def automate_google_meet(page, url):
                     return false;
                 }
             """)
-            joined = True
-            log("✅ Clicked using JS.")
-        except:
-            log("❌ Failed to join Google Meet.")
+            if res:
+                log("✅ Clicked Join using JS.")
+                joined = True
+            else:
+                log("⚠️ JS could not find the Join/Ask button.")
+        except Exception as e:
+            log(f"⚠️ JavaScript forced join failed: {e}")
+
+    if not joined:
+        log("❌ Failed to join Google Meet.")
 
 def automate_zoom(page, url):
     log("📡 Automating Zoom...")
@@ -422,7 +456,14 @@ def run_bot():
         context = browser.new_context(
             viewport={'width': 1366, 'height': 768},
             permissions=['camera', 'microphone'],
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+            user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            extra_http_headers={
+                "sec-ch-ua": '"Chromium";v="122", "Google Chrome";v="122", "Not/A)Brand";v="99"',
+                "sec-ch-ua-mobile": "?0",
+                "sec-ch-ua-platform": '"Linux"'
+            },
+            locale="en-US",
+            timezone_id="UTC"
         )
         
         # Spoof navigator.webdriver globally for all context windows/iframes
