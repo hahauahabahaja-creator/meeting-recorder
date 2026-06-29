@@ -3,6 +3,7 @@ import time
 import sys
 import random
 import requests
+import subprocess
 from datetime import datetime
 from playwright.sync_api import sync_playwright
 from playwright_stealth import stealth_sync
@@ -59,7 +60,6 @@ def human_type(element, text):
     try:
         element.click()
         time.sleep(random.uniform(0.3, 0.7))
-        # Use press_sequentially for modern playwright, fallback to type/fill
         if hasattr(element, "press_sequentially"):
             element.press_sequentially(text, delay=random.randint(70, 180))
         else:
@@ -75,13 +75,29 @@ def human_type(element, text):
 def human_mouse_move(page):
     """Simulates realistic mouse movements to bypass bot-checks"""
     try:
-        width = 1366
-        height = 768
         for _ in range(random.randint(2, 4)):
-            page.mouse.move(random.randint(50, width-50), random.randint(50, height-50))
-            time.sleep(random.uniform(0.2, 0.5))
+            page.mouse.move(random.randint(100, 1200), random.randint(100, 600))
+            time.sleep(random.uniform(0.15, 0.35))
     except Exception as e:
         log(f"⚠️ Mouse movement simulation failed: {e}")
+
+def generate_fake_video():
+    """Generate a tiny .y4m fake video file for Chrome's fake camera"""
+    fake_path = "/tmp/fake_camera.y4m"
+    if os.path.exists(fake_path):
+        return fake_path
+    try:
+        subprocess.run([
+            "ffmpeg", "-y", "-f", "lavfi", "-i",
+            "color=c=black:s=320x240:d=1:r=1",
+            "-pix_fmt", "yuv420p", fake_path
+        ], capture_output=True, timeout=10)
+        if os.path.exists(fake_path):
+            log("✅ Fake camera video file generated.")
+            return fake_path
+    except Exception as e:
+        log(f"⚠️ Could not generate fake video: {e}")
+    return None
 
 # ============================================
 # 🐙 GITHUB ACTION VARIABLE SYSTEM
@@ -129,7 +145,6 @@ def get_command_flag(var_name):
     current_time = time.time()
     
     if RENDER_URL:
-        # Fetch every 2 seconds at max
         if cached_command_response is None or (current_time - cached_time) > 2:
             try:
                 endpoint = RENDER_URL.rstrip('/') + '/api/command'
@@ -184,135 +199,251 @@ def format_zoom_url(url):
     return url
 
 # ============================================
-# 🚀 AUTOMATION STEPS
+# 🚀 RESOURCE BLOCKER (Speed Boost)
+# ============================================
+BLOCKED_DOMAINS = [
+    "google-analytics.com",
+    "googletagmanager.com",
+    "doubleclick.net",
+    "facebook.net",
+    "connect.facebook.com",
+    "fonts.googleapis.com",
+    "fonts.gstatic.com",
+]
+
+def setup_resource_blocker(page):
+    """Block heavy non-essential resources to free up CPU"""
+    def handle_route(route):
+        url = route.request.url
+        resource_type = route.request.resource_type
+        
+        # Block tracking & analytics domains
+        for domain in BLOCKED_DOMAINS:
+            if domain in url:
+                route.abort()
+                return
+        
+        # Block images and fonts (not needed for joining)
+        if resource_type in ["image", "font"]:
+            route.abort()
+            return
+        
+        route.continue_()
+    
+    page.route("**/*", handle_route)
+    log("🛡️ Resource blocker active (analytics, fonts, images blocked)")
+
+# ============================================
+# 🚀 GOOGLE MEET AUTOMATION (REWRITTEN)
 # ============================================
 def automate_google_meet(page, url):
     log("📡 Automating Google Meet...")
-    page.goto(url, timeout=60000)
     
-    log("⏳ Waiting for Google Meet page to finish loading...")
-    try:
-        # Wait up to 45 seconds for either the name input field OR a Join button to appear
-        page.wait_for_selector('input[type="text"], button:has-text("Join"), button:has-text("Ask")', timeout=45000)
-        log("✅ Google Meet pre-join page elements detected.")
-    except Exception as e:
-        log(f"⚠️ Page loading timed out or elements not found: {e}")
-        
-    page.wait_for_timeout(3000)
-
-    # 1. Dismiss Dialog/Popup (Dismiss, Got it)
-    log("🔄 Checking for dialogs...")
-    try:
-        page.evaluate("""
+    # Block heavy resources before navigating
+    setup_resource_blocker(page)
+    
+    # Navigate using domcontentloaded (don't wait for all resources)
+    log("🌐 Loading Google Meet page...")
+    page.goto(url, wait_until="domcontentloaded", timeout=60000)
+    log("✅ DOM loaded. Waiting for Meet UI to initialize...")
+    
+    # Smart polling: wait for ANY interactive element with retries
+    max_wait = 120  # 2 minutes max
+    poll_interval = 3
+    elapsed = 0
+    element_found = False
+    
+    while elapsed < max_wait:
+        # Check if name input OR join button exists in DOM (even if not visible)
+        found = page.evaluate("""
             () => {
-                document.querySelectorAll('button').forEach(btn => {
-                    let txt = btn.innerText || '';
-                    if (txt.includes('Got it') || txt.includes('Dismiss') || txt.includes('I understand')) {
-                        btn.click();
-                    }
-                });
+                let input = document.querySelector('input[type="text"][placeholder]');
+                let joinBtn = [...document.querySelectorAll('button')].find(
+                    b => (b.innerText || '').match(/join|ask/i)
+                );
+                return {
+                    hasInput: !!input,
+                    hasJoin: !!joinBtn,
+                    inputPlaceholder: input ? input.placeholder : '',
+                    joinText: joinBtn ? joinBtn.innerText.trim() : ''
+                };
             }
         """)
-    except:
-        pass
-
-    # 2. Focus and Turn off mic and camera (Ctrl+d and Ctrl+e)
-    log("🔇 Muting microphone & shutting down camera...")
+        
+        if found.get("hasInput") or found.get("hasJoin"):
+            log(f"✅ Meet UI detected! Input: {found.get('inputPlaceholder', 'N/A')}, Button: {found.get('joinText', 'N/A')}")
+            element_found = True
+            break
+        
+        log(f"⏳ Waiting for Meet UI... ({elapsed}s / {max_wait}s)")
+        page.wait_for_timeout(poll_interval * 1000)
+        elapsed += poll_interval
+    
+    if not element_found:
+        log("⚠️ Meet UI elements not found after 2 minutes. Attempting to proceed anyway...")
+    
+    page.wait_for_timeout(2000)
+    
+    # 1. Dismiss any dialogs (Got it, Dismiss, etc.)
+    log("🔄 Dismissing dialogs...")
+    page.evaluate("""
+        () => {
+            document.querySelectorAll('button').forEach(btn => {
+                let txt = (btn.innerText || '').toLowerCase();
+                if (txt.includes('got it') || txt.includes('dismiss') || txt.includes('i understand') || txt.includes('ok')) {
+                    btn.click();
+                }
+            });
+        }
+    """)
+    page.wait_for_timeout(1000)
+    
+    # 2. Turn off mic and camera via keyboard shortcuts
+    log("🔇 Muting microphone & camera...")
     try:
-        # Click body to ensure keyboard focus is on the page
-        page.click('body')
-        page.wait_for_timeout(1000)
+        page.click('body', timeout=3000)
+        page.wait_for_timeout(500)
         page.keyboard.press("Control+d")
-        page.wait_for_timeout(1000)
+        page.wait_for_timeout(500)
         page.keyboard.press("Control+e")
-        page.wait_for_timeout(2000)
+        page.wait_for_timeout(1000)
     except Exception as e:
-        log(f"⚠️ Could not use shortcuts: {e}")
-
-    # 3. Enter Guest Name
+        log(f"⚠️ Keyboard shortcuts failed: {e}")
+    
+    # Also try clicking mic/camera toggle buttons directly via JS
+    page.evaluate("""
+        () => {
+            // Find and click mic/camera toggle buttons by aria-label
+            document.querySelectorAll('[aria-label*="microphone"], [aria-label*="camera"], [data-tooltip*="microphone"], [data-tooltip*="camera"]').forEach(el => {
+                if (el.tagName === 'BUTTON' || el.closest('button')) {
+                    (el.closest('button') || el).click();
+                }
+            });
+        }
+    """)
+    page.wait_for_timeout(1000)
+    
+    # 3. Enter guest name using multiple strategies
+    log("✍️ Entering display name...")
     name_entered = False
+    
+    # Strategy A: Direct Playwright interaction
     try:
         name_input = page.locator('input[type="text"]').first
-        if name_input.is_visible(timeout=5000):
-            log("✍️ Typing display name...")
+        if name_input.is_visible(timeout=3000):
+            name_input.click()
+            name_input.fill("")
             human_type(name_input, BOT_NAME)
             name_entered = True
-            page.wait_for_timeout(1000)
-    except Exception as e:
-        log(f"ℹ️ Standard guest name entry skipped or failed: {e}")
-
-    # Fallback to JavaScript if standard entry was skipped or failed
+            log("✅ Name typed via Playwright.")
+    except:
+        pass
+    
+    # Strategy B: JavaScript forced entry with React-compatible events
     if not name_entered:
-        log("✍️ Attempting JavaScript forced name entry...")
-        try:
-            res = page.evaluate(f"""
-                (bot_name) => {{
-                    let input = document.querySelector('input[type="text"]');
-                    if (input) {{
-                        input.value = bot_name;
-                        input.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                        input.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                        return true;
-                    }}
-                    return false;
-                }}
-            """, BOT_NAME)
-            if res:
-                log("✅ Name entered using JS.")
-                page.wait_for_timeout(2000)
-            else:
-                log("⚠️ JS could not find the guest name input field.")
-        except Exception as e:
-            log(f"⚠️ JavaScript name entry failed: {e}")
-
-    # 4. Join the meeting
-    log("⏳ Attempting to Join Google Meet call...")
+        log("✍️ Trying JS name injection...")
+        result = page.evaluate("""
+            (botName) => {
+                let inputs = document.querySelectorAll('input[type="text"]');
+                for (let input of inputs) {
+                    // Use React's native input setter to bypass virtual DOM
+                    let nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                        window.HTMLInputElement.prototype, 'value'
+                    ).set;
+                    nativeInputValueSetter.call(input, botName);
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                    input.dispatchEvent(new Event('change', { bubbles: true }));
+                    input.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true }));
+                    input.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
+                    return true;
+                }
+                return false;
+            }
+        """, BOT_NAME)
+        if result:
+            name_entered = True
+            log("✅ Name injected via JS.")
+        else:
+            log("⚠️ No text input found for name.")
+    
+    page.wait_for_timeout(2000)
+    
+    # 4. Click Join/Ask to join button with multiple strategies
+    log("⏳ Attempting to join meeting...")
     human_mouse_move(page)
     joined = False
-    selectors = ["text=Ask to join", "text=Join now", "button:has-text('Join')", "button:has-text('Ask')"]
     
-    for selector in selectors:
+    # Strategy A: Playwright locators
+    join_selectors = [
+        "button:has-text('Ask to join')",
+        "button:has-text('Join now')",
+        "button:has-text('Join')",
+        "button:has-text('Ask')",
+    ]
+    for sel in join_selectors:
         try:
-            btn = page.locator(selector).first
-            if btn.is_visible(timeout=5000):
+            btn = page.locator(sel).first
+            if btn.is_visible(timeout=2000):
                 btn.click()
-                log(f"✅ Clicked Join using: {selector}")
+                log(f"✅ Joined via Playwright: {sel}")
                 joined = True
                 break
         except:
             continue
-
+    
+    # Strategy B: JavaScript click with retry
     if not joined:
-        log("⚠️ Trying JavaScript forced join...")
-        try:
-            # Let's add a small wait to ensure button is enabled after input event
-            page.wait_for_timeout(2000)
-            res = page.evaluate("""
+        log("⚠️ Trying JS join click...")
+        for attempt in range(3):
+            result = page.evaluate("""
                 () => {
                     let btns = [...document.querySelectorAll('button')];
-                    let jBtn = btns.find(b => b.innerText.includes('Join') || b.innerText.includes('Ask'));
-                    if(jBtn) {
-                        jBtn.click();
-                        return true;
+                    let joinBtn = btns.find(b => {
+                        let txt = (b.innerText || '').toLowerCase();
+                        return (txt.includes('join') || txt.includes('ask')) && !b.disabled;
+                    });
+                    if (joinBtn) {
+                        joinBtn.scrollIntoView();
+                        joinBtn.focus();
+                        joinBtn.click();
+                        return joinBtn.innerText.trim();
                     }
-                    return false;
+                    return null;
                 }
             """)
-            if res:
-                log("✅ Clicked Join using JS.")
+            if result:
+                log(f"✅ Joined via JS click: '{result}' (attempt {attempt+1})")
                 joined = True
-            else:
-                log("⚠️ JS could not find the Join/Ask button.")
-        except Exception as e:
-            log(f"⚠️ JavaScript forced join failed: {e}")
-
+                break
+            page.wait_for_timeout(2000)
+    
+    # Strategy C: Simulate Enter key on the name field
     if not joined:
-        log("❌ Failed to join Google Meet.")
+        log("⚠️ Trying Enter key submission...")
+        try:
+            page.keyboard.press("Tab")
+            page.wait_for_timeout(500)
+            page.keyboard.press("Enter")
+            page.wait_for_timeout(2000)
+            log("✅ Submitted via Enter key.")
+            joined = True
+        except:
+            pass
+    
+    if not joined:
+        log("❌ Could not join Google Meet after all strategies.")
+    else:
+        # Wait a moment to confirm we're in the meeting
+        page.wait_for_timeout(5000)
+        log("🎯 Google Meet join sequence completed.")
 
+# ============================================
+# 🚀 ZOOM AUTOMATION
+# ============================================
 def automate_zoom(page, url):
     log("📡 Automating Zoom...")
     target_url = format_zoom_url(url)
-    page.goto(target_url, timeout=60000)
+    page.goto(target_url, wait_until="domcontentloaded", timeout=60000)
     page.wait_for_timeout(10000)
 
     # Handle Cookies & TOS
@@ -383,9 +514,12 @@ def automate_zoom(page, url):
     except:
         pass
 
+# ============================================
+# 🚀 TEAMS AUTOMATION
+# ============================================
 def automate_teams(page, url):
     log("📡 Automating Microsoft Teams...")
-    page.goto(url, timeout=60000)
+    page.goto(url, wait_until="domcontentloaded", timeout=60000)
     page.wait_for_timeout(10000)
 
     # 1. Fill Name
@@ -430,27 +564,35 @@ def run_bot():
     
     send_telegram(f"🚀 **Bot Started**\n📡 Platform: `{platform.upper()}`\n🔗 URL: `{MEET_URL}`")
 
+    # Generate fake camera video file
+    fake_video = generate_fake_video()
+
     with sync_playwright() as p:
         log("🌐 Launching Playwright Chromium Browser...")
         
-        # Standard configuration to run undetected
+        # Build launch args
+        launch_args = [
+            "--use-fake-ui-for-media-stream",
+            "--use-fake-device-for-media-stream",
+            "--disable-blink-features=AutomationControlled",
+            "--window-size=1366,768",
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--enable-unsafe-swiftshader",
+            "--disable-background-timer-throttling",
+            "--disable-backgrounding-occluded-windows",
+            "--disable-renderer-backgrounding",
+            "--autoplay-policy=no-user-gesture-required",
+        ]
+        
+        # If fake video exists, use it for camera
+        if fake_video:
+            launch_args.append(f"--use-file-for-fake-video-capture={fake_video}")
+        
         browser = p.chromium.launch(
-            headless=False, # Xvfb handles the GUI display in actions
-            args=[
-                "--use-fake-ui-for-media-stream",
-                "--use-fake-device-for-media-stream",
-                "--disable-blink-features=AutomationControlled",
-                "--window-size=1366,768",
-                "--mute-audio",
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-webgl",
-                "--disable-3d-apis",
-                "--use-gl=angle",
-                "--use-angle=swiftshader",
-                "--enable-unsafe-swiftshader"
-            ]
+            headless=False,
+            args=launch_args
         )
 
         context = browser.new_context(
@@ -466,12 +608,12 @@ def run_bot():
             timezone_id="UTC"
         )
         
-        # Spoof navigator.webdriver globally for all context windows/iframes
+        # Spoof navigator.webdriver globally
         context.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined })")
         
         page = context.new_page()
         
-        # Apply standard Stealth Plugin overrides
+        # Apply Stealth Plugin overrides
         stealth_sync(page)
 
         # Execute platform automation
