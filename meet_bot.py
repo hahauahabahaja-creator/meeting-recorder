@@ -207,31 +207,23 @@ BLOCKED_DOMAINS = [
     "doubleclick.net",
     "facebook.net",
     "connect.facebook.com",
-    "fonts.googleapis.com",
-    "fonts.gstatic.com",
 ]
 
 def setup_resource_blocker(page):
     """Block heavy non-essential resources to free up CPU"""
     def handle_route(route):
         url = route.request.url
-        resource_type = route.request.resource_type
         
-        # Block tracking & analytics domains
+        # Block tracking & analytics domains only (fonts/images allowed to prevent breaking UI initialization)
         for domain in BLOCKED_DOMAINS:
             if domain in url:
                 route.abort()
                 return
         
-        # Block images and fonts (not needed for joining)
-        if resource_type in ["image", "font"]:
-            route.abort()
-            return
-        
         route.continue_()
     
     page.route("**/*", handle_route)
-    log("🛡️ Resource blocker active (analytics, fonts, images blocked)")
+    log("🛡️ Resource blocker active (analytics domains blocked)")
 
 # ============================================
 # 🚀 GOOGLE MEET AUTOMATION (REWRITTEN)
@@ -328,14 +320,14 @@ def automate_google_meet(page, url):
         # Check if name input OR join button exists in DOM (even if not visible)
         found = page.evaluate("""
             () => {
-                let input = document.querySelector('input[type="text"][placeholder]');
+                let input = document.querySelector('input[type="text"]');
                 let joinBtn = [...document.querySelectorAll('button')].find(
                     b => (b.innerText || '').match(/join|ask/i)
                 );
                 return {
                     hasInput: !!input,
                     hasJoin: !!joinBtn,
-                    inputPlaceholder: input ? input.placeholder : '',
+                    inputPlaceholder: input ? (input.placeholder || 'Name Input') : '',
                     joinText: joinBtn ? joinBtn.innerText.trim() : ''
                 };
             }
@@ -487,6 +479,37 @@ def automate_google_meet(page, url):
                 joined = True
                 break
             page.wait_for_timeout(2000)
+    
+    # Strategy B2: Force-enable disabled buttons and click
+    if not joined:
+        log("⚠️ Trying force-enable disabled buttons...")
+        result = page.evaluate("""
+            () => {
+                let btns = [...document.querySelectorAll('button')];
+                let joinBtn = btns.find(b => {
+                    let txt = (b.innerText || '').toLowerCase();
+                    return txt.includes('join') || txt.includes('ask');
+                });
+                if (joinBtn) {
+                    // Force remove disabled state
+                    joinBtn.disabled = false;
+                    joinBtn.removeAttribute('disabled');
+                    joinBtn.style.pointerEvents = 'auto';
+                    joinBtn.style.opacity = '1';
+                    // Remove any aria-disabled
+                    joinBtn.removeAttribute('aria-disabled');
+                    // Force click
+                    joinBtn.click();
+                    // Also dispatch click event
+                    joinBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+                    return joinBtn.innerText.trim();
+                }
+                return null;
+            }
+        """)
+        if result:
+            log(f"✅ Force-joined via disabled button override: '{result}'")
+            joined = True
     
     # Strategy C: Simulate Enter key on the name field
     if not joined:
@@ -681,8 +704,134 @@ def run_bot():
             timezone_id="UTC"
         )
         
-        # Spoof navigator.webdriver globally
-        context.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined })")
+        # Inject media overrides + webdriver spoof BEFORE any page loads
+        context.add_init_script("""
+            // 1. Spoof webdriver
+            try {
+                Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            } catch (e) {}
+
+            // Helper to generate a fully synthetic media stream instantly
+            function createFakeStream(constraints) {
+                const tracks = [];
+                const needVideo = !constraints || constraints.video !== false;
+                const needAudio = !constraints || constraints.audio !== false;
+
+                if (needVideo) {
+                    try {
+                        const canvas = document.createElement('canvas');
+                        canvas.width = 640;
+                        canvas.height = 480;
+                        const ctx = canvas.getContext('2d');
+                        ctx.fillStyle = '#111111';
+                        ctx.fillRect(0, 0, 640, 480);
+                        
+                        let x = 0;
+                        setInterval(() => {
+                            try {
+                                ctx.fillStyle = '#111111';
+                                ctx.fillRect(0, 0, 640, 480);
+                                ctx.fillStyle = '#34a853'; // Google Green
+                                ctx.fillRect(x, 220, 40, 40);
+                                ctx.fillStyle = '#ffffff';
+                                ctx.font = '20px Arial';
+                                ctx.fillText('Recording Bot Active', 50, 50);
+                                x = (x + 8) % 640;
+                            } catch(e) {}
+                        }, 100);
+                        
+                        const videoStream = canvas.captureStream(15);
+                        const videoTrack = videoStream.getVideoTracks()[0];
+                        if (videoTrack) {
+                            tracks.push(videoTrack);
+                        }
+                    } catch(e) {
+                        console.error("Failed to create fake video track:", e);
+                    }
+                }
+
+                if (needAudio) {
+                    try {
+                        const ac = new (window.AudioContext || window.webkitAudioContext)();
+                        const dest = ac.createMediaStreamDestination();
+                        const audioTrack = dest.stream.getAudioTracks()[0];
+                        if (audioTrack) {
+                            tracks.push(audioTrack);
+                        }
+                        
+                        const resume = () => {
+                            if (ac.state === 'suspended') ac.resume();
+                        };
+                        document.addEventListener('click', resume, { once: true });
+                        document.addEventListener('keydown', resume, { once: true });
+                    } catch(e) {
+                        console.error("Failed to create fake audio track:", e);
+                    }
+                }
+
+                return new MediaStream(tracks);
+            }
+
+            // 2. Mock getUserMedia completely to bypass hardware/OS dependencies
+            const mockGetUserMedia = function(constraints) {
+                return Promise.resolve(createFakeStream(constraints));
+            };
+
+            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                navigator.mediaDevices.getUserMedia = mockGetUserMedia;
+            }
+            if (window.MediaDevices && window.MediaDevices.prototype && window.MediaDevices.prototype.getUserMedia) {
+                window.MediaDevices.prototype.getUserMedia = mockGetUserMedia;
+            }
+
+            const mockLegacyGUM = function(constraints, success, error) {
+                const stream = createFakeStream(constraints);
+                if (typeof success === 'function') {
+                    setTimeout(() => success(stream), 10);
+                }
+                return Promise.resolve(stream);
+            };
+
+            if (navigator.getUserMedia) navigator.getUserMedia = mockLegacyGUM;
+            if (navigator.webkitGetUserMedia) navigator.webkitGetUserMedia = mockLegacyGUM;
+            if (navigator.mozGetUserMedia) navigator.mozGetUserMedia = mockLegacyGUM;
+
+            // 3. Override enumerateDevices to always return fake devices instantly
+            if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+                navigator.mediaDevices.enumerateDevices = function() {
+                    const devices = [
+                        { deviceId: 'mock-audio-input', kind: 'audioinput', label: 'System Microphone (Virtual)', groupId: 'mock-group' },
+                        { deviceId: 'mock-video-input', kind: 'videoinput', label: 'System Camera (Virtual)', groupId: 'mock-group' },
+                        { deviceId: 'mock-audio-output', kind: 'audiooutput', label: 'System Speakers (Virtual)', groupId: 'mock-group' }
+                    ];
+                    return Promise.resolve(devices.map(d => {
+                        const mockDevice = Object.create(MediaDeviceInfo.prototype);
+                        Object.defineProperties(mockDevice, {
+                            deviceId: { value: d.deviceId, enumerable: true },
+                            kind: { value: d.kind, enumerable: true },
+                            label: { value: d.label, enumerable: true },
+                            groupId: { value: d.groupId, enumerable: true }
+                        });
+                        return mockDevice;
+                    }));
+                };
+            }
+
+            // 4. Mock Permissions API to auto-grant camera and microphone checks
+            if (navigator.permissions && navigator.permissions.query) {
+                const _origQuery = navigator.permissions.query.bind(navigator.permissions);
+                navigator.permissions.query = function(descriptor) {
+                    if (descriptor && (descriptor.name === 'camera' || descriptor.name === 'microphone')) {
+                        return Promise.resolve({
+                            state: 'granted',
+                            status: 'granted',
+                            onchange: null
+                        });
+                    }
+                    return _origQuery(descriptor);
+                };
+            }
+        """)
         
         page = context.new_page()
         
