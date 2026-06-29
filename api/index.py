@@ -33,6 +33,11 @@ if not all([BOT_TOKEN, GITHUB_TOKEN, REPO_NAME]):
 bot = telebot.TeleBot(BOT_TOKEN) if BOT_TOKEN else None
 app = Flask(__name__)
 
+# Global flags for direct Render command polling (bypasses GitHub variables)
+stop_flag = "0"
+view_flag = "0"
+full_flag = "0"
+
 # ==========================================
 # 🔒 AUTHORIZATION CHECK
 # ==========================================
@@ -235,6 +240,11 @@ def start_recording(message):
     )
     
     # Initialize flags
+    global stop_flag, view_flag, full_flag
+    stop_flag = "0"
+    view_flag = "0"
+    full_flag = "0"
+    
     create_or_update_github_variable("STOP_FLAG", "0")
     create_or_update_github_variable("VIEW_FLAG", "0")
     create_or_update_github_variable("FULL_FLAG", "0")
@@ -245,9 +255,14 @@ def start_recording(message):
         "Authorization": f"Bearer {GITHUB_TOKEN}",
         "Accept": "application/vnd.github+json"
     }
+    
+    render_url = os.environ.get("RENDER_EXTERNAL_URL", "").strip()
     data = {
         "ref": "main",
-        "inputs": {"meet_url": meet_url}
+        "inputs": {
+            "meet_url": meet_url,
+            "render_url": render_url
+        }
     }
     
     try:
@@ -310,6 +325,8 @@ def stop_recording(message):
         parse_mode="Markdown"
     )
     
+    global stop_flag
+    stop_flag = "1"
     create_or_update_github_variable("STOP_FLAG", "1")
     
     time.sleep(5)
@@ -342,6 +359,8 @@ def live_view(message):
         "📤 You will receive the photo here in a few seconds.",
         parse_mode="Markdown"
     )
+    global view_flag
+    view_flag = "1"
     create_or_update_github_variable("VIEW_FLAG", "1")
 
 @bot.message_handler(commands=['full'])
@@ -363,6 +382,8 @@ def full_screen(message):
         "✅ Requesting fullscreen mode on the runner page.",
         parse_mode="Markdown"
     )
+    global full_flag
+    full_flag = "1"
     create_or_update_github_variable("FULL_FLAG", "1")
 
 @bot.message_handler(commands=['cancel'])
@@ -377,6 +398,8 @@ def cancel_operation(message):
             "🛑 Halting all operations and shutting down runner...",
             parse_mode="Markdown"
         )
+        global stop_flag
+        stop_flag = "1"
         create_or_update_github_variable("STOP_FLAG", "1")
     else:
         bot.reply_to(
@@ -423,6 +446,19 @@ def health_check():
         "recording": is_workflow_running(),
         "authorized_group": ALLOWED_GROUP_ID or "all"
     }
+
+@app.route('/api/command')
+def get_command():
+    global stop_flag, view_flag, full_flag
+    res = {
+        "stop": stop_flag,
+        "view": view_flag,
+        "full": full_flag
+    }
+    # Reset transient flags after they are read by the runner
+    view_flag = "0"
+    full_flag = "0"
+    return res
 
 # ==========================================
 # 🚀 BOT RUNNER
