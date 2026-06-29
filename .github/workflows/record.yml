@@ -59,12 +59,17 @@ jobs:
           
           Xvfb :99 -screen 0 1366x768x24 &
           export DISPLAY=:99
+          sleep 3
           
-          # 2. VNC & noVNC
+          # 2. VNC & noVNC (Increased compatibility and binding to all interfaces)
           VNC_PASS=$(openssl rand -hex 4)
           export VNC_PASS
-          x11vnc -display :99 -forever -shared -bg -passwd "$VNC_PASS" -rfbport 5900 &
-          websockify --web /usr/share/novnc 6080 localhost:5900 &
+          x11vnc -display :99 -forever -shared -bg -passwd "$VNC_PASS" -rfbport 5900 -listen 0.0.0.0 &
+          sleep 2
+          
+          # Start websockify and ensure it bridges correctly
+          websockify --web /usr/share/novnc 6080 0.0.0.0:5900 &
+          sleep 2
           
           # 3. Public Tunnel
           python tunnel.py &
@@ -88,8 +93,6 @@ jobs:
           video_file = 'output.mp4'
 
           if not os.path.exists(video_file):
-              if os.path.exists('ffmpeg.log'):
-                  with open('ffmpeg.log', 'r') as f: print(f.read())
               exit(0)
 
           size_mb = os.path.getsize(video_file) / (1024 * 1024)
