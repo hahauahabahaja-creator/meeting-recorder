@@ -236,16 +236,87 @@ def setup_resource_blocker(page):
 # ============================================
 # 🚀 GOOGLE MEET AUTOMATION (REWRITTEN)
 # ============================================
+def handle_google_consent(page, context, meet_url):
+    """Handle Google policies/consent pages that open in new tabs or redirect"""
+    # Check if current page is a policies/consent page
+    current_url = page.url.lower()
+    is_consent = any(x in current_url for x in ["policies.google.com", "consent.google", "accounts.google.com/TOS", "myaccount.google.com"])
+    
+    if is_consent:
+        log("📋 Google consent/policies page detected. Accepting...")
+        try:
+            # Try clicking any "I agree" or "Accept" buttons
+            page.evaluate("""
+                () => {
+                    let btns = [...document.querySelectorAll('button, a')];
+                    let acceptBtn = btns.find(b => {
+                        let txt = (b.innerText || '').toLowerCase();
+                        return txt.includes('agree') || txt.includes('accept') || txt.includes('i agree') || txt.includes('ok');
+                    });
+                    if (acceptBtn) acceptBtn.click();
+                }
+            """)
+            page.wait_for_timeout(2000)
+        except:
+            pass
+        
+        # Navigate back to Meet URL
+        log("🔄 Navigating back to Meet URL...")
+        page.goto(meet_url, wait_until="domcontentloaded", timeout=60000)
+        page.wait_for_timeout(3000)
+    
+    # Handle extra tabs that Google might open
+    all_pages = context.pages
+    if len(all_pages) > 1:
+        log(f"🔄 {len(all_pages)} tabs detected. Closing extra tabs...")
+        for p in all_pages:
+            p_url = p.url.lower()
+            if any(x in p_url for x in ["policies.google.com", "consent.google", "accounts.google", "about:blank"]):
+                try:
+                    p.close()
+                    log(f"   ✅ Closed tab: {p_url[:60]}")
+                except:
+                    pass
+        
+        # Make sure we're on the right page
+        remaining = context.pages
+        if remaining:
+            page = remaining[0]
+            if "meet.google.com" not in page.url.lower():
+                log("🔄 Re-navigating to Meet URL...")
+                page.goto(meet_url, wait_until="domcontentloaded", timeout=60000)
+                page.wait_for_timeout(3000)
+    
+    return page
+
 def automate_google_meet(page, url):
     log("📡 Automating Google Meet...")
+    context = page.context
     
     # Block heavy resources before navigating
     setup_resource_blocker(page)
+    
+    # Listen for new tabs/popups and auto-close unwanted ones
+    def on_new_page(new_page):
+        new_url = new_page.url.lower()
+        log(f"🔄 New tab detected: {new_url[:80]}")
+        if any(x in new_url for x in ["policies.google.com", "consent.google", "support.google"]):
+            try:
+                new_page.close()
+                log("   ✅ Closed unwanted popup tab.")
+            except:
+                pass
+    
+    context.on("page", on_new_page)
     
     # Navigate using domcontentloaded (don't wait for all resources)
     log("🌐 Loading Google Meet page...")
     page.goto(url, wait_until="domcontentloaded", timeout=60000)
     log("✅ DOM loaded. Waiting for Meet UI to initialize...")
+    
+    # Handle Google consent/policies redirect
+    page.wait_for_timeout(3000)
+    page = handle_google_consent(page, context, url)
     
     # Smart polling: wait for ANY interactive element with retries
     max_wait = 120  # 2 minutes max
@@ -436,6 +507,8 @@ def automate_google_meet(page, url):
         # Wait a moment to confirm we're in the meeting
         page.wait_for_timeout(5000)
         log("🎯 Google Meet join sequence completed.")
+    
+    return page
 
 # ============================================
 # 🚀 ZOOM AUTOMATION
@@ -618,7 +691,7 @@ def run_bot():
 
         # Execute platform automation
         if platform == "google":
-            automate_google_meet(page, MEET_URL)
+            page = automate_google_meet(page, MEET_URL)
         elif platform == "zoom":
             automate_zoom(page, MEET_URL)
         elif platform == "teams":
