@@ -37,6 +37,7 @@ app = Flask(__name__)
 stop_flag = "0"
 view_flag = "0"
 full_flag = "0"
+rec_flag = "0"
 
 # ==========================================
 # 🔒 AUTHORIZATION CHECK
@@ -150,11 +151,13 @@ def send_welcome(message):
         "━━━━━━━━━━━━━━━━━━━━━\n"
         f"👤 Welcome, {user.first_name}!\n\n"
         "**📋 Available Commands:**\n"
-        "🚀 `/go <meeting_url>` - Start recording session (Google Meet, Zoom, or Teams)\n"
-        "🛑 `/off` - Stop recording and finalize video file\n"
-        "📸 `/vew` - Take live screenshot of the meeting\n"
-        "📺 `/full` - Request fullscreen display mode\n"
-        "📊 `/status` - Check current recording status\n"
+        "🚀 `/go <meeting_url>` - Start session & get RDP link\n"
+        "⏺️ `/rec_on` - Start recording manually\n"
+        "⏹️ `/rec_off` - Stop recording & upload\n"
+        "🛑 `/off` - Full stop (Stop recording & close runner)\n"
+        "📸 `/vew` - Take live screenshot\n"
+        "📺 `/full` - Request fullscreen mode\n"
+        "📊 `/status` - Check current status\n"
         "⚡ `/cancel` - Stop ongoing operation instantly\n\n"
         "**📌 Examples:**\n"
         "• `/go https://meet.google.com/abc-defg-hij`\n"
@@ -240,14 +243,16 @@ def start_recording(message):
     )
     
     # Initialize flags
-    global stop_flag, view_flag, full_flag
+    global stop_flag, view_flag, full_flag, rec_flag
     stop_flag = "0"
     view_flag = "0"
     full_flag = "0"
-    
+    rec_flag = "0"
+
     create_or_update_github_variable("STOP_FLAG", "0")
     create_or_update_github_variable("VIEW_FLAG", "0")
     create_or_update_github_variable("FULL_FLAG", "0")
+    create_or_update_github_variable("REC_FLAG", "0")
 
     # Dispatch GitHub Actions Workflow
     url = f"https://api.github.com/repos/{REPO_NAME}/actions/workflows/{WORKFLOW_NAME}/dispatches"
@@ -447,13 +452,40 @@ def health_check():
         "authorized_group": ALLOWED_GROUP_ID or "all"
     }
 
+@bot.message_handler(commands=['rec_on'])
+def start_rec_command(message):
+    if not is_authorized(message):
+        return
+    if not is_workflow_running():
+        bot.reply_to(message, "💤 **No Active Session**\nStart a session with `/go` first.", parse_mode="Markdown")
+        return
+
+    global rec_flag
+    rec_flag = "1"
+    create_or_update_github_variable("REC_FLAG", "1")
+    bot.reply_to(message, "⏺️ **Recording Signal Sent**\nFFmpeg is starting and RDP will be disabled for performance.", parse_mode="Markdown")
+
+@bot.message_handler(commands=['rec_off'])
+def stop_rec_command(message):
+    if not is_authorized(message):
+        return
+    if not is_workflow_running():
+        bot.reply_to(message, "💤 **No Active Session**", parse_mode="Markdown")
+        return
+
+    global rec_flag
+    rec_flag = "0"
+    create_or_update_github_variable("REC_FLAG", "0")
+    bot.reply_to(message, "⏹️ **Stop Recording Signal Sent**\nFinalizing video file...", parse_mode="Markdown")
+
 @app.route('/api/command')
 def get_command():
-    global stop_flag, view_flag, full_flag
+    global stop_flag, view_flag, full_flag, rec_flag
     res = {
         "stop": stop_flag,
         "view": view_flag,
-        "full": full_flag
+        "full": full_flag,
+        "rec": rec_flag
     }
     # Reset transient flags after they are read by the runner
     view_flag = "0"
