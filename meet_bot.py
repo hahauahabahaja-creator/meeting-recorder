@@ -411,6 +411,8 @@ def run_bot():
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
                 "--disable-dev-shm-usage",
+                "--disable-webgl",
+                "--disable-3d-apis",
                 "--use-gl=angle",
                 "--use-angle=swiftshader",
                 "--enable-unsafe-swiftshader"
