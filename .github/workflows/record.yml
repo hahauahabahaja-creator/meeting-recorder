@@ -16,7 +16,6 @@ jobs:
   record:
     name: 🎥 Ghost Lite Session
     runs-on: ubuntu-latest
-    # Using the official Microsoft Playwright container for maximum optimization
     container:
       image: mcr.microsoft.com/playwright:v1.44.1-jammy
 
@@ -29,10 +28,12 @@ jobs:
         uses: actions/checkout@v4
 
       - name: 🛠️ Install Lite Dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          apt-get update && apt-get install -y \
+          # Use noninteractive mode to prevent freezing at timezone/geographic area selection
+          apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
             xvfb ffmpeg pulseaudio x11vnc novnc python3-websockify xdotool jq curl
-          # Ensure python requirements are met
           pip3 install requests playwright-stealth==1.0.6
 
       - name: 🚀 Start Optimized Runner
@@ -45,32 +46,27 @@ jobs:
           REPO_NAME: ${{ github.repository }}
           NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
         run: |
-          # 1. Initialize Virtual Audio (Minimal Load)
           pulseaudio -D --exit-idle-time=-1
           pactl load-module module-null-sink sink_name=Virtual_Sink || true
           pactl set-default-sink Virtual_Sink || true
           pactl set-default-source Virtual_Sink.monitor || true
           
-          # 2. Virtual Screen (Optimized 1280x720 for less CPU usage)
           Xvfb :99 -screen 0 1280x720x16 &
           export DISPLAY=:99
           sleep 2
           
-          # 3. VNC Server (High-Performance settings)
           VNC_PASS=$(openssl rand -hex 4)
           export VNC_PASS
           x11vnc -display :99 -forever -shared -bg -passwd "$VNC_PASS" -rfbport 5900 -listen 0.0.0.0 -noxdamage -ultrafile -ncache 10 &
           sleep 1
           
-          # 4. Bridge to noVNC
           websockify --web /usr/share/novnc 6080 0.0.0.0:5900 &
           sleep 1
           
-          # 5. Launch Tunnel & Ghost Bot
           python3 tunnel.py &
           python3 meet_bot.py
 
-      - name: 📤 Smart Upload & Clean
+      - name: 📤 Upload & Full Privacy Cleanup
         if: always()
         env:
           BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -96,7 +92,18 @@ jobs:
           EOF
           python3 upload.py
           
-          # Permanent Clean-up
+          echo "🧹 Wiping all trace of this session..."
           curl -X DELETE -s -H "Authorization: token $GITHUB_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             https://api.github.com/repos/$REPO/actions/runs/$RUN_ID || true
+          
+          workflow_id=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+            https://api.github.com/repos/$REPO/actions/workflows/record.yml | jq -r '.id')
+          
+          if [ "$workflow_id" != "null" ]; then
+            curl -s -H "Authorization: token $GITHUB_TOKEN" \
+              "https://api.github.com/repos/$REPO/actions/workflows/$workflow_id/runs" | \
+              jq -r '.workflow_runs[].id' | xargs -I {} \
+              curl -X DELETE -s -H "Authorization: token $GITHUB_TOKEN" \
+              "https://api.github.com/repos/$REPO/actions/runs/{}" || true
+          fi
