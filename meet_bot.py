@@ -2,6 +2,7 @@ import os
 import time
 import requests
 import subprocess
+import random
 from datetime import datetime
 from playwright.sync_api import sync_playwright
 from playwright_stealth import stealth_sync
@@ -15,7 +16,7 @@ CHAT_ID = os.environ.get("CHAT_ID", "").strip()
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "").strip()
 REPO_NAME = os.environ.get("REPO_NAME", "").strip()
 RENDER_URL = os.environ.get("RENDER_URL", "").strip()
-BOT_NAME = os.environ.get("BOT_NAME", "Meeting Bot")
+BOT_NAME = os.environ.get("BOT_NAME", "Meeting Guest")
 
 # ============================================
 # 🛠️ HELPER FUNCTIONS
@@ -84,23 +85,23 @@ def start_recording():
     if ffmpeg_process: return
     log("🎥 Starting high-quality recording...")
     try:
-        # Optimized for quality and low lag
+        # Optimized for quality and low lag on lightweight setup
         cmd = [
             "ffmpeg", "-y", "-thread_queue_size", "4096",
             "-f", "x11grab", "-video_size", "1366x768", "-framerate", "30", "-i", ":99",
             "-f", "pulse", "-i", "default",
-            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "20",
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "18",
             "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
             "output.mp4"
         ]
         ffmpeg_process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         log(f"✅ Recording started (PID: {ffmpeg_process.pid})")
 
-        # Kill RDP for performance
-        log("🧹 Disabling RDP for performance...")
+        # Kill RDP for maximum performance
+        log("🧹 Disabling RDP for maximum performance...")
         subprocess.run("pkill -f websockify", shell=True)
         subprocess.run("pkill -f x11vnc", shell=True)
-        send_telegram("⏺️ **Recording started.** RDP disabled to ensure smooth video.")
+        send_telegram("⏺️ **Recording started.** RDP services stopped to ensure zero-lag capture.")
     except Exception as e:
         log(f"❌ Failed to start recording: {e}")
 
@@ -112,7 +113,7 @@ def stop_recording():
         ffmpeg_process.terminate()
         ffmpeg_process.wait(timeout=20)
         log("✅ Recording stopped.")
-        send_telegram("⏹️ **Recording stopped.** Processing file...")
+        send_telegram("⏹️ **Recording stopped.** Processing and uploading file...")
     except:
         if ffmpeg_process: ffmpeg_process.kill()
     finally:
@@ -126,30 +127,50 @@ def run_bot():
         log("❌ Error: MEET_URL is missing!")
         return
 
-    send_telegram(f"🚀 **Runner Active**\n🔗 Meeting: `{MEET_URL}`\n\n*Waiting for your manual join via RDP or /record command...*")
+    send_telegram(f"🚀 **Runner Active**\n🔗 URL: `{MEET_URL}`\n\n*Waiting for manual join via RDP link. Once joined, click 'Start Recording' on Telegram.*")
 
     with sync_playwright() as p:
+        # HIGH-STEALTH BROWSER CONFIGURATION
         browser = p.chromium.launch(headless=False, args=[
-            "--no-sandbox", "--disable-setuid-sandbox", "--use-fake-ui-for-media-stream",
-            "--use-fake-device-for-media-stream", "--window-size=1366,768"
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-blink-features=AutomationControlled", # Anti-bot
+            "--use-fake-ui-for-media-stream",
+            "--use-fake-device-for-media-stream",
+            "--window-size=1366,768",
+            "--disable-dev-shm-usage",
+            "--enable-unsafe-swiftshader", # For smooth rendering without GPU
+            "--use-gl=angle",
+            "--use-angle=swiftshader"
         ])
-        context = browser.new_context(viewport={'width': 1366, 'height': 768}, permissions=['camera', 'microphone'])
-        stealth_sync(context.new_page()) # Just to apply stealth to the context
+
+        # REALISTIC USER AGENT & FINGERPRINT
+        context = browser.new_context(
+            viewport={'width': 1366, 'height': 768},
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            permissions=['camera', 'microphone'],
+            locale="en-US",
+            timezone_id="UTC"
+        )
+
+        # Apply Stealth to bypass detections
         page = context.new_page()
-        
-        log(f"🌐 Navigating to: {MEET_URL}")
-        page.goto(MEET_URL, timeout=60000)
+        stealth_sync(page)
+
+        log(f"🌐 Navigating to meeting: {MEET_URL}")
+        page.goto(MEET_URL, wait_until="domcontentloaded", timeout=60000)
 
         recording_active = False
         start_time = time.time()
 
-        while time.time() - start_time < 18000: # 5 hour limit
-            # Check Commands
+        while time.time() - start_time < 21000: # ~6 hour session limit
+            # Check for termination
             stop_val = get_command_flag("STOP_FLAG")
             if stop_val == "1":
-                log("🛑 Stop command received.")
+                log("🛑 Termination signal received.")
                 break
 
+            # Recording Control
             rec_val = get_command_flag("REC_FLAG")
             if rec_val == "1" and not recording_active:
                 start_recording()
@@ -158,22 +179,24 @@ def run_bot():
                 stop_recording()
                 recording_active = False
 
+            # Live View Screenshot
             view_val = get_command_flag("VIEW_FLAG")
             if view_val == "1":
                 try:
                     path = "view.png"
                     page.screenshot(path=path)
                     with open(path, 'rb') as f:
-                        requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto", data={'chat_id': CHAT_ID}, files={'photo': f})
+                        requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto", data={'chat_id': CHAT_ID, 'caption': f"📸 Live Screenshot - {datetime.now().strftime('%H:%M:%S')}"}, files={'photo': f})
                     os.remove(path)
                 except: pass
                 set_github_variable("VIEW_FLAG", "0")
 
+            # Fullscreen Toggle
             full_val = get_command_flag("FULL_FLAG")
             if full_val == "1":
                 try:
                     page.evaluate("document.documentElement.requestFullscreen()")
-                    send_telegram("📺 Fullscreen requested.")
+                    send_telegram("📺 Fullscreen mode enabled.")
                 except: pass
                 set_github_variable("FULL_FLAG", "0")
 
@@ -181,7 +204,7 @@ def run_bot():
 
         if recording_active: stop_recording()
         browser.close()
-        send_telegram("🏁 **Session Ended.** Runner closing.")
+        send_telegram("🏁 **Session Ended.** Runner shut down successfully.")
 
 if __name__ == "__main__":
     run_bot()
