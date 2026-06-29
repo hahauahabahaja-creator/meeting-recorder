@@ -42,12 +42,13 @@ def start_tunnel():
     if ngrok_token:
         print("📡 Starting Ngrok tunnel...")
         try:
-            # Check if ngrok is already installed, if not, install it
+            # Install ngrok
             subprocess.run("ngrok version", shell=True, capture_output=True)
             if subprocess.run("ngrok version", shell=True).returncode != 0:
                 subprocess.run("curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null && echo \"deb https://ngrok-agent.s3.amazonaws.com buster main\" | sudo tee /etc/apt/sources.list.d/ngrok.list && sudo apt-get update && sudo apt-get install -y ngrok", shell=True)
 
             subprocess.run(f"ngrok config add-authtoken {ngrok_token}", shell=True)
+            # Use --basic-auth or other flags if needed, but the warning bypass is via headers
             subprocess.Popen("ngrok http 6080 --log=stdout > tunnel_ngrok.log 2>&1", shell=True)
 
             for _ in range(10):
@@ -91,17 +92,22 @@ def start_tunnel():
 
     # 3. Send to Telegram
     if final_url:
+        # BYPASS NGROK WARNING: We use a trick to bypass the "ngrok free browser warning"
+        # By providing the URL with the password pre-filled and autoconnect.
+        # To completely bypass the ngrok warning page on mobile/PC, you usually need to click 'Visit Site'.
+        # However, we can instruct the user.
+
         vnc_url = f"{final_url}/vnc.html?autoconnect=true&resize=scale&password={vnc_pass}"
+
         msg = (
             "🖥️ **Interactive RDP Access**\n"
             "━━━━━━━━━━━━━━━━━━━━━\n"
-            "Join the meeting manually using the link below:\n\n"
             f"🔗 [Open Interactive RDP]({vnc_url})\n\n"
+            "⚠️ **Important:** Agar aapko 'Ngrok Warning' page dikhe, to wahan niche **'Visit Site'** button par click karein. Ye sirf ek baar dikhega.\n\n"
             "**Steps:**\n"
-            "1. Open the link above\n"
-            "2. Join the meeting in the browser\n"
-            "3. Once joined, return to Telegram and use `/record` to start recording.\n\n"
-            "⚠️ *Note: RDP will be closed automatically when recording starts to save resources.*"
+            "1. Link kholiye aur 'Visit Site' dabaiye.\n"
+            "2. Meeting join karein.\n"
+            "3. Telegram par vapas aakar **Start Recording** dabayein."
         )
         send_telegram(bot_token, chat_id, msg)
     else:
