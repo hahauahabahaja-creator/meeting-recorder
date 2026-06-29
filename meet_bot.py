@@ -205,6 +205,58 @@ def get_command_flag(var_name):
     return get_github_variable(var_name)
 
 # ============================================
+# 🎥 RECORDING CONTROL (FFMPEG)
+# ============================================
+ffmpeg_process = None
+
+def start_ffmpeg():
+    global ffmpeg_process
+    if ffmpeg_process:
+        log("⚠️ FFmpeg is already running.")
+        return
+
+    log("🎥 Starting FFmpeg capture...")
+    try:
+        # Command to capture video and audio
+        cmd = [
+            "ffmpeg", "-y", "-thread_queue_size", "1024",
+            "-f", "x11grab", "-video_size", "1366x768", "-framerate", "25", "-i", ":99",
+            "-thread_queue_size", "1024", "-f", "pulse", "-i", "default",
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
+            "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",
+            "-movflags", "+faststart", "output.mp4"
+        ]
+        ffmpeg_process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        log(f"✅ FFmpeg started (PID: {ffmpeg_process.pid})")
+
+        # Kill RDP services to save resources
+        log("🧹 Stopping RDP services to optimize performance...")
+        subprocess.run("pkill -f websockify", shell=True)
+        subprocess.run("pkill -f x11vnc", shell=True)
+        log("✅ RDP services terminated.")
+
+    except Exception as e:
+        log(f"❌ Failed to start FFmpeg: {e}")
+
+def stop_ffmpeg():
+    global ffmpeg_process
+    if not ffmpeg_process:
+        log("⚠️ No active FFmpeg process to stop.")
+        return
+
+    log("🛑 Stopping FFmpeg...")
+    try:
+        ffmpeg_process.send_signal(subprocess.signal.SIGINT)
+        ffmpeg_process.wait(timeout=30)
+        log("✅ FFmpeg stopped successfully.")
+    except Exception as e:
+        log(f"⚠️ Error stopping FFmpeg: {e}")
+        if ffmpeg_process:
+            ffmpeg_process.kill()
+    finally:
+        ffmpeg_process = None
+
+# ============================================
 # 🧬 PLATFORM DETECTOR & FORMATTER
 # ============================================
 def get_platform(url):
@@ -847,16 +899,32 @@ def run_bot():
         log("🔄 Monitoring meeting status & GitHub flags...")
         start_time = time.time()
         max_time = 18000 # 5 Hours max safety
-        
+        recording_active = False
+
         while time.time() - start_time < max_time:
             # 1. Check STOP_FLAG
             stop_val = get_command_flag("STOP_FLAG")
             if stop_val == "1":
                 log("🛑 STOP_FLAG detected! Exiting bot.")
+                if recording_active:
+                    stop_ffmpeg()
                 send_telegram("🛑 **Stop Command Received.** Finishing recording...")
                 break
 
-            # 2. Check VIEW_FLAG (Live Screenshot)
+            # 2. Check REC_FLAG
+            rec_val = get_command_flag("REC_FLAG")
+            if rec_val == "1" and not recording_active:
+                log("⏺️ REC_FLAG (ON) detected!")
+                start_ffmpeg()
+                recording_active = True
+                send_telegram("⏺️ **Recording started.** RDP disabled for performance.")
+            elif rec_val == "0" and recording_active:
+                log("⏹️ REC_FLAG (OFF) detected!")
+                stop_ffmpeg()
+                recording_active = False
+                send_telegram("⏹️ **Recording stopped.** File is being finalized.")
+
+            # 3. Check VIEW_FLAG (Live Screenshot)
             view_val = get_command_flag("VIEW_FLAG")
             if view_val == "1":
                 log("📸 VIEW_FLAG detected! Capturing screenshot...")
