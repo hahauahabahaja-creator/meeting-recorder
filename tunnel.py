@@ -85,7 +85,8 @@ def start_tunnel():
 
     # 3. Send to Telegram (English)
     if final_url:
-        vnc_url = f"{final_url}/vnc.html?autoconnect=true&resize=scale&password={vnc_pass}"
+        # POINTING TO vnc_lite.html TO BYPASS ui.js BUGS
+        vnc_url = f"{final_url}/vnc_lite.html?password={vnc_pass}"
         msg = (
             "?? **Interactive RDP Access**\n"
             "?????????????????????\n"
