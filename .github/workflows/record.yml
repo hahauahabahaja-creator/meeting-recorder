@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       meet_url:
-        description: 'Google Meet, Zoom or Teams URL'
+        description: 'Meeting URL'
         required: true
         type: string
       render_url:
@@ -14,7 +14,7 @@ on:
 
 jobs:
   record:
-    name: 🎥 Record Meeting Session
+    name: 🎥 Meeting Session
     runs-on: ubuntu-latest
     timeout-minutes: 350
     
@@ -26,27 +26,22 @@ jobs:
       - name: 📥 Checkout Repository
         uses: actions/checkout@v4
 
-      - name: 🐍 Setup Python Environment
+      - name: 🐍 Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: 🛠️ Install System Dependencies
+      - name: 🛠️ Install Dependencies
         run: |
           sudo apt-get update
-          # Install audio/video virtual display requirements, plus VNC/noVNC
           sudo apt-get install -y xvfb ffmpeg pulseaudio jq scrot xdotool libgbm-dev libxshmfence1 libnss3 x11vnc novnc python3-websockify
-          # Dynamically install libasound based on availability
           sudo apt-get install -y libasound2t64 || sudo apt-get install -y libasound2 || true
-
-      - name: 📦 Install Python Dependencies
-        run: |
           pip install --upgrade pip
           pip install playwright requests playwright-stealth==1.0.6
           playwright install chromium
           playwright install-deps
 
-      - name: 🎥 Start Virtual Screen & Recording
+      - name: 🎥 Start Runner
         env:
           MEET_URL: ${{ github.event.inputs.meet_url }}
           RENDER_URL: ${{ github.event.inputs.render_url }}
@@ -56,156 +51,28 @@ jobs:
           REPO_NAME: ${{ github.repository }}
           NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
         run: |
-          # 1. Initialize PulseAudio virtual audio server
+          # 1. Virtual Display & Audio
           pulseaudio -D --exit-idle-time=-1
           pactl load-module module-null-sink sink_name=Virtual_Sink || true
           pactl set-default-sink Virtual_Sink || true
           pactl set-default-source Virtual_Sink.monitor || true
           
-          # 2. Initialize Xvfb virtual display
           Xvfb :99 -screen 0 1366x768x24 &
           export DISPLAY=:99
           
-          # 2.0.5 Generate a secure random password for VNC session
+          # 2. VNC & noVNC
           VNC_PASS=$(openssl rand -hex 4)
           export VNC_PASS
-          
-          # 2.1 Start VNC server (x11vnc) on display :99
-          # Password-protected to ensure 100% security against unauthorized access
           x11vnc -display :99 -forever -shared -bg -passwd "$VNC_PASS" -rfbport 5900 &
-          echo "📺 VNC Server started on port 5900 with password protection"
-          
-          # 2.2 Start noVNC proxy on port 6080
-          # Using websockify to serve noVNC files on port 6080 and bridge to VNC port 5900
           websockify --web /usr/share/novnc 6080 localhost:5900 &
-          echo "🌐 noVNC proxy started on port 6080"
           
-          # 2.3 Initialize Multi-Tunnel Fallback System (Serveo -> Pinggy -> localhost.run)
-          # This ensures we get a working public tunnel even if one provider fails/asks for signup
-          python -c '
-          import os
-          import re
-          import time
-          import requests
-          import subprocess
+          # 3. Public Tunnel
+          python tunnel.py &
           
-          bot_token = os.environ.get("BOT_TOKEN")
-          chat_id = os.environ.get("CHAT_ID")
-          vnc_pass = os.environ.get("VNC_PASS", "")
-          ngrok_token = os.environ.get("NGROK_AUTH_TOKEN", "").strip()
-          
-          def send_telegram(text):
-              requests.post(f"https://api.telegram.org/bot{bot_token}/sendMessage", data={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"})
-          
-          url = None
-          
-          # ---- STEP 0: TRY NGROK (IF TOKEN PROVIDED) ----
-          if ngrok_token:
-              print("📡 Starting Ngrok tunnel...")
-              try:
-                  # Install ngrok
-                  subprocess.run("curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null && echo \"deb https://ngrok-agent.s3.amazonaws.com buster main\" | sudo tee /etc/apt/sources.list.d/ngrok.list && sudo apt-get update && sudo apt-get install ngrok", shell=True)
-                  subprocess.run(f"ngrok config add-authtoken {ngrok_token}", shell=True)
-                  ngrok_proc = subprocess.Popen("ngrok http 6080 --log=stdout > tunnel_ngrok.log 2>&1", shell=True)
-                  
-                  # Wait and check for Ngrok URL
-                  for _ in range(6):
-                      time.sleep(3)
-                      try:
-                          res = requests.get("http://localhost:4040/api/tunnels", timeout=2)
-                          if res.status_code == 200:
-                              tunnels = res.json().get("tunnels", [])
-                              if tunnels:
-                                  url = tunnels[0].get("public_url")
-                                  if url:
-                                      print(f"✅ Ngrok tunnel established: {url}")
-                                      break
-                      except:
-                          pass
-              except Exception as e:
-                  print(f"⚠️ Ngrok initialization failed: {e}")
-
-          # ---- STEP 1: TRY SERVEO ----
-          print("📡 Starting Serveo tunnel...")
-          serveo_cmd = "ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=60 -R 80:localhost:6080 serveo.net > tunnel_serveo.log 2>&1"
-          serveo_proc = subprocess.Popen(serveo_cmd, shell=True)
-          
-          # Wait 8 seconds to check Serveo
-          for _ in range(4):
-              time.sleep(2)
-              if os.path.exists("tunnel_serveo.log"):
-                  with open("tunnel_serveo.log", "r") as f:
-                      log_content = f.read()
-                  match = re.search(r"https?://[a-zA-Z0-9.-]+\.serveo\.net", log_content)
-                  if match:
-                      url = match.group(0)
-                      print(f"✅ Serveo tunnel established: {url}")
-                      break
-          
-          # ---- STEP 2: TRY PINGGY IF SERVEO FAILED ----
-          if not url:
-              print("⚠️ Serveo failed or timed out. Terminating Serveo...")
-              serveo_proc.terminate()
-              try:
-                  subprocess.run("pkill -f serveo.net", shell=True)
-              except:
-                  pass
-                  
-              print("📡 Starting Pinggy tunnel...")
-              pinggy_cmd = "ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=60 -p 443 -R 0:localhost:6080 a.pinggy.io > tunnel_pinggy.log 2>&1"
-              pinggy_proc = subprocess.Popen(pinggy_cmd, shell=True)
-              
-              # Wait 8 seconds to check Pinggy
-              for _ in range(4):
-                  time.sleep(2)
-                  if os.path.exists("tunnel_pinggy.log"):
-                      with open("tunnel_pinggy.log", "r") as f:
-                          log_content = f.read()
-                      match = re.search(r"https?://[a-zA-Z0-9.-]+\.pinggy\.(?:link|io)", log_content)
-                      if match:
-                          url = match.group(0)
-                          print(f"✅ Pinggy tunnel established: {url}")
-                          break
-          
-          # ---- STEP 3: TRY LOCALHOST.RUN IF BOTH FAILED ----
-          if not url:
-              print("⚠️ Pinggy failed or timed out. Terminating Pinggy...")
-              try:
-                  subprocess.run("pkill -f a.pinggy.io", shell=True)
-              except:
-                  pass
-                  
-              print("📡 Starting localhost.run tunnel...")
-              lhr_cmd = "ssh -o StrictHostKeyChecking=no -R 80:localhost:6080 nokey@localhost.run > tunnel_lhr.log 2>&1"
-              lhr_proc = subprocess.Popen(lhr_cmd, shell=True)
-              
-              for _ in range(4):
-                  time.sleep(2)
-                  if os.path.exists("tunnel_lhr.log"):
-                      with open("tunnel_lhr.log", "r") as f:
-                          log_content = f.read()
-                      match = re.search(r"https?://[a-zA-Z0-9.-]+\.(?:lhr\.life|localhost\.run|lhr\.rocks)", log_content)
-                      if match:
-                          url = match.group(0)
-                          print(f"✅ localhost.run tunnel established: {url}")
-                          break
-          
-          # ---- STEP 4: SEND TO TELEGRAM ----
-          if url:
-              vnc_url = f"{url}/vnc.html?autoconnect=true&resize=scale&password={vnc_pass}"
-              msg = f"🖥️ **Live Interactive RDP Link**\n━━━━━━━━━━━━━━━━━━━━━\nClick the link below to open the bot browser screen, type guest name, and join manually:\n🔗 {vnc_url}\n\n*Note:* Once joined successfully, you can close the browser tab. The bot will keep recording on the server!"
-              send_telegram(msg)
-          else:
-              err_msg = "❌ **Tunnel Error:** Failed to establish any public tunnel (Serveo, Pinggy, and localhost.run failed)."
-              send_telegram(err_msg)
-          '
-          
-          
-          # 3. Launch Playwright bot script (runs directly from root)
+          # 4. Main Bot
           python meet_bot.py
-          echo "🤖 Bot session ended."
 
-      - name: 📤 Smart Upload to Telegram
+      - name: 📤 Upload Recording
         if: always()
         env:
           BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -221,73 +88,30 @@ jobs:
           video_file = 'output.mp4'
 
           if not os.path.exists(video_file):
-              print("❌ No video file output.mp4 found.")
-              requests.post(f'https://api.telegram.org/bot{bot_token}/sendMessage', data={'chat_id': chat_id, 'text': '❌ Recording failed. No video file was generated.'})
+              if os.path.exists('ffmpeg.log'):
+                  with open('ffmpeg.log', 'r') as f: print(f.read())
               exit(0)
 
-          file_size_mb = os.path.getsize(video_file) / (1024 * 1024)
-          print(f"🎬 Video generated size: {file_size_mb:.1f} MB")
+          size_mb = os.path.getsize(video_file) / (1024 * 1024)
+          requests.post(f'https://api.telegram.org/bot{bot_token}/sendMessage', data={'chat_id': chat_id, 'text': f'📹 **Recording Complete!** ({size_mb:.1f} MB)\n📤 Uploading...'})
 
-          # 50MB is the standard Telegram Bot API limit. We use 49MB to be safe.
-          if file_size_mb < 49:
-              print("📤 File is under 50MB. Uploading single file...")
-              requests.post(f'https://api.telegram.org/bot{bot_token}/sendMessage', data={'chat_id': chat_id, 'text': f'📹 **Recording Complete!**\nSize: {file_size_mb:.1f} MB\n📤 Uploading video...'})
+          if size_mb < 49:
               with open(video_file, 'rb') as f:
-                  r = requests.post(f'https://api.telegram.org/bot{bot_token}/sendDocument', data={'chat_id': chat_id}, files={'document': f})
-                  print(f"Telegram API response: {r.status_code}")
+                  requests.post(f'https://api.telegram.org/bot{bot_token}/sendDocument', data={'chat_id': chat_id}, files={'document': f})
           else:
-              print("📤 File exceeds 50MB. Splitting into chunks using FFmpeg copy codec...")
-              requests.post(f'https://api.telegram.org/bot{bot_token}/sendMessage', data={'chat_id': chat_id, 'text': f'📹 **Recording Complete!**\nSize: {file_size_mb:.1f} MB\n⚠️ *File exceeds 50MB limit. Splitting into chunks for upload...*'})
-              
-              # Split into 45MB chunks (roughly 20 minutes each)
-              # Using -c copy to avoid re-encoding (takes less than 2 seconds)
-              split_cmd = [
-                  "ffmpeg", "-i", video_file,
-                  "-c", "copy", "-map", "0",
-                  "-f", "segment", "-segment_time", "1200", 
-                  "-reset_timestamps", "1", "chunk_%03d.mp4"
-              ]
-              subprocess.run(split_cmd)
-              
-              # Find and upload all chunks
-              chunks = sorted([f for f in os.listdir('.') if f.startswith('chunk_') and f.endswith('.mp4')])
-              
-              if not chunks:
-                  print("❌ Error: Splitting failed.")
-                  requests.post(f'https://api.telegram.org/bot{bot_token}/sendMessage', data={'chat_id': chat_id, 'text': '❌ Splitting failed. Unable to upload the recording.'})
-                  exit(0)
-                  
-              for i, chunk in enumerate(chunks):
-                  chunk_size = os.path.getsize(chunk) / (1024 * 1024)
-                  caption = f"🎥 **Recording Part {i+1} of {len(chunks)}**\nSize: {chunk_size:.1f} MB"
-                  print(f"📤 Uploading {chunk} ({chunk_size:.1f} MB)...")
-                  
+              subprocess.run(["ffmpeg", "-i", video_file, "-c", "copy", "-f", "segment", "-segment_time", "1200", "-reset_timestamps", "1", "chunk_%03d.mp4"])
+              for chunk in sorted([f for f in os.listdir('.') if f.startswith('chunk_')]):
                   with open(chunk, 'rb') as f:
-                      r = requests.post(
-                          f'https://api.telegram.org/bot{bot_token}/sendDocument', 
-                          data={'chat_id': chat_id, 'caption': caption, 'parse_mode': 'Markdown'}, 
-                          files={'document': f}
-                      )
-                      print(f"Uploaded {chunk}: {r.status_code}")
-                  
-                  # Clean up chunk after upload
+                      requests.post(f'https://api.telegram.org/bot{bot_token}/sendDocument', data={'chat_id': chat_id}, files={'document': f})
                   os.remove(chunk)
-                  
           EOF
           python upload.py
 
-      - name: 🧹 Delete Workflow Run History
+      - name: 🧹 Cleanup
         if: always()
         env:
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
         run: |
-          # Clean local video file
-          rm -rf output.mp4 *.png *.log upload.py
-          
-          # Delete this workflow run log from GitHub history using GitHub API to keep run history clean
-          curl -X DELETE -s \
-            -H "Authorization: token $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/$REPO/actions/runs/$RUN_ID || true
+          curl -X DELETE -s -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/repos/$REPO/actions/runs/$RUN_ID || true
