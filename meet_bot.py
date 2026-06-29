@@ -408,30 +408,35 @@ def automate_google_meet(page, url):
         
         # 2. Turn off mic and camera via keyboard shortcuts
         log("🔇 Muting microphone & camera...")
+        # Try to locate and click mic/camera toggle buttons with human movements first
         try:
-            page.click('body', timeout=3000)
-            page.wait_for_timeout(500)
+            mic_btn = page.locator('[aria-label*="microphone"], [data-tooltip*="microphone"]').first
+            if mic_btn.is_visible(timeout=3000):
+                human_click(page, mic_btn)
+                log("✅ Muted microphone via human click.")
+        except Exception as e:
+            log(f"⚠️ Mic click failed: {e}")
+            
+        try:
+            cam_btn = page.locator('[aria-label*="camera"], [data-tooltip*="camera"]').first
+            if cam_btn.is_visible(timeout=3000):
+                human_click(page, cam_btn)
+                log("✅ Muted camera via human click.")
+        except Exception as e:
+            log(f"⚠️ Camera click failed: {e}")
+            
+        # Keyboard shortcuts as fallback to ensure they are off
+        try:
+            page.click('body', timeout=2000)
             page.keyboard.press("Control+d")
             page.wait_for_timeout(500)
             page.keyboard.press("Control+e")
-            page.wait_for_timeout(1000)
-        except Exception as e:
-            log(f"⚠️ Keyboard shortcuts failed: {e}")
-        
-        # Also try clicking mic/camera toggle buttons directly via JS
-        page.evaluate("""
-            () => {
-                // Find and click mic/camera toggle buttons by aria-label
-                document.querySelectorAll('[aria-label*="microphone"], [aria-label*="camera"], [data-tooltip*="microphone"], [data-tooltip*="camera"]').forEach(el => {
-                    if (el.tagName === 'BUTTON' || el.closest('button')) {
-                        (el.closest('button') || el).click();
-                    }
-                });
-            }
-        """)
+            page.wait_for_timeout(500)
+        except:
+            pass
         page.wait_for_timeout(1000)
         
-        # 3. Enter guest name using multiple strategies
+        # 3. Enter guest name and submit via Enter key
         log("✍️ Entering display name...")
         name_entered = False
         
@@ -480,102 +485,7 @@ def automate_google_meet(page, url):
             else:
                 log("⚠️ No text input found for name.")
         
-        page.wait_for_timeout(2000)
-        
-        # 4. Click Join/Ask to join button with multiple strategies (as fallback)
-        log("⏳ Attempting fallback join clicks...")
-        human_mouse_move(page)
-        joined = False
-        
-        # Strategy A: Playwright locators
-        join_selectors = [
-            "button:has-text('Ask to join')",
-            "button:has-text('Join now')",
-            "button:has-text('Join')",
-            "button:has-text('Ask')",
-        ]
-        for sel in join_selectors:
-            try:
-                btn = page.locator(sel).first
-                if btn.is_visible(timeout=2000):
-                    if human_click(page, btn):
-                        log(f"✅ Joined via Playwright fallback: {sel}")
-                        joined = True
-                        break
-            except:
-                continue
-        
-        # Strategy B: JavaScript click with retry
-        if not joined:
-            log("⚠️ Trying JS join click fallback...")
-            for js_attempt in range(3):
-                result = page.evaluate("""
-                    () => {
-                        let btns = [...document.querySelectorAll('button')];
-                        let joinBtn = btns.find(b => {
-                            let txt = (b.innerText || '').toLowerCase();
-                            return (txt.includes('join') || txt.includes('ask')) && !b.disabled;
-                        });
-                        if (joinBtn) {
-                            joinBtn.scrollIntoView();
-                            joinBtn.focus();
-                            joinBtn.click();
-                            return joinBtn.innerText.trim();
-                        }
-                        return null;
-                    }
-                """)
-                if result:
-                    log(f"✅ Joined via JS click fallback: '{result}' (attempt {js_attempt+1})")
-                    joined = True
-                    break
-                page.wait_for_timeout(2000)
-        
-        # Strategy B2: Force-enable disabled buttons and click
-        if not joined:
-            log("⚠️ Trying force-enable disabled buttons fallback...")
-            result = page.evaluate("""
-                () => {
-                    let btns = [...document.querySelectorAll('button')];
-                    let joinBtn = btns.find(b => {
-                        let txt = (b.innerText || '').toLowerCase();
-                        return txt.includes('join') || txt.includes('ask');
-                    });
-                    if (joinBtn) {
-                        // Force remove disabled state
-                        joinBtn.disabled = false;
-                        joinBtn.removeAttribute('disabled');
-                        joinBtn.style.pointerEvents = 'auto';
-                        joinBtn.style.opacity = '1';
-                        // Remove any aria-disabled
-                        joinBtn.removeAttribute('aria-disabled');
-                        // Force click
-                        joinBtn.click();
-                        // Also dispatch click event
-                        joinBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-                        return joinBtn.innerText.trim();
-                    }
-                    return null;
-                }
-            """)
-            if result:
-                log(f"✅ Force-joined via disabled button override fallback: '{result}'")
-                joined = True
-        
-        # Strategy C: Simulate Enter key on the name field fallback
-        if not joined:
-            log("⚠️ Trying Enter key submission fallback...")
-            try:
-                page.keyboard.press("Tab")
-                page.wait_for_timeout(500)
-                page.keyboard.press("Enter")
-                page.wait_for_timeout(2000)
-                log("✅ Submitted via Enter key fallback.")
-                joined = True
-            except:
-                pass
-        
-        # 5. Verify if we successfully initiated join or are in/waiting
+        # 4. Verify if we successfully initiated join or are in/waiting
         page.wait_for_timeout(5000)
         
         # Check if name input is still present (if it's gone, we successfully left lobby!)
@@ -729,6 +639,7 @@ def run_bot():
         
         # Build launch args
         launch_args = [
+            "--incognito",
             "--use-fake-ui-for-media-stream",
             "--use-fake-device-for-media-stream",
             "--disable-blink-features=AutomationControlled",
@@ -863,9 +774,9 @@ def run_bot():
             if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
                 navigator.mediaDevices.enumerateDevices = function() {
                     const devices = [
-                        { deviceId: 'mock-audio-input', kind: 'audioinput', label: 'System Microphone (Virtual)', groupId: 'mock-group' },
-                        { deviceId: 'mock-video-input', kind: 'videoinput', label: 'System Camera (Virtual)', groupId: 'mock-group' },
-                        { deviceId: 'mock-audio-output', kind: 'audiooutput', label: 'System Speakers (Virtual)', groupId: 'mock-group' }
+                        { deviceId: 'default', kind: 'audioinput', label: 'Realtek High Definition Audio Microphone', groupId: 'default-group' },
+                        { deviceId: 'webcam-camera', kind: 'videoinput', label: 'Integrated Webcam (HD)', groupId: 'default-group' },
+                        { deviceId: 'default-output', kind: 'audiooutput', label: 'Realtek Speakers (Default)', groupId: 'default-group' }
                     ];
                     return Promise.resolve(devices.map(d => {
                         const mockDevice = Object.create(MediaDeviceInfo.prototype);
