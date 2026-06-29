@@ -7,6 +7,10 @@ on:
         description: 'Google Meet, Zoom or Teams URL'
         required: true
         type: string
+      render_url:
+        description: 'Render App External URL'
+        required: false
+        type: string
 
 jobs:
   record:
@@ -45,6 +49,7 @@ jobs:
       - name: 🎥 Start Virtual Screen & Recording
         env:
           MEET_URL: ${{ github.event.inputs.meet_url }}
+          RENDER_URL: ${{ github.event.inputs.render_url }}
           BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
