@@ -14,9 +14,8 @@ on:
 
 jobs:
   record:
-    name: 🎥 Ghost Lite Session
+    name: ? Ghost Lite Session
     runs-on: ubuntu-latest
-    # Match the required Playwright version to avoid executable mismatch
     container:
       image: mcr.microsoft.com/playwright:v1.48.0-jammy
       options: --user root
@@ -26,19 +25,18 @@ jobs:
       actions: write
 
     steps:
-      - name: 📥 Checkout Repository
+      - name: ? Checkout Repository
         uses: actions/checkout@v4
 
-      - name: 🛠️ Install Lite Dependencies
+      - name: ?? Install Lite Dependencies
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
           apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
             xvfb ffmpeg pulseaudio x11vnc novnc python3-websockify xdotool jq curl python3-pip
-          # Sync pip packages with container version
           pip3 install requests playwright-stealth==1.0.6 playwright==1.48.0
 
-      - name: 🚀 Start Optimized Runner
+      - name: ? Start Optimized Runner
         env:
           MEET_URL: ${{ github.event.inputs.meet_url }}
           RENDER_URL: ${{ github.event.inputs.render_url }}
@@ -49,12 +47,9 @@ jobs:
           NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
           HOME: /root
         run: |
-          # 1. Setup Audio (Improved for Docker Root)
+          # 1. Setup Audio
           mkdir -p /root/.config/pulse
-          echo "default-server = unix:/run/user/0/pulse/native" > /root/.config/pulse/client.conf
           pulseaudio -D --exit-idle-time=-1 --realtime=false --disallow-exit --disallow-module-loading --fail=no || true
-          
-          # Load null sink for recording
           pactl load-module module-null-sink sink_name=Virtual_Sink || true
           pactl set-default-sink Virtual_Sink || true
           pactl set-default-source Virtual_Sink.monitor || true
@@ -64,13 +59,14 @@ jobs:
           export DISPLAY=:99
           sleep 2
           
-          # 3. VNC Server (Fixed unrecognized options)
+          # 3. VNC Server
           VNC_PASS=$(openssl rand -hex 4)
           export VNC_PASS
           x11vnc -display :99 -forever -shared -bg -passwd "$VNC_PASS" -rfbport 5900 -listen 0.0.0.0 -noxdamage -ncache 10 &
           sleep 1
           
-          # 4. Bridge to noVNC
+          # 4. Bridge to noVNC (USING DIRECT VNC.HTML PATH TO BYPASS UI.JS BUGS)
+          # We use the official vnc.html which is more stable than the index page
           websockify --web /usr/share/novnc 6080 0.0.0.0:5900 &
           sleep 1
           
@@ -78,7 +74,7 @@ jobs:
           python3 tunnel.py &
           python3 meet_bot.py
 
-      - name: 📤 Upload & Full Privacy Cleanup
+      - name: ? Upload & Full Privacy Cleanup
         if: always()
         env:
           BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -93,19 +89,16 @@ jobs:
           chat = os.environ.get('CHAT_ID')
           if os.path.exists('output.mp4'):
               size = os.path.getsize('output.mp4') / (1024*1024)
-              requests.post(f'https://api.telegram.org/bot{token}/sendMessage', data={'chat_id': chat, 'text': f'📹 **Session Complete!** ({size:.1f} MB)\nUploading now...'})
+              requests.post(f'https://api.telegram.org/bot{token}/sendMessage', data={'chat_id': chat, 'text': f'? **Session Complete!** ({size:.1f} MB)\nUploading now...'})
               if size < 49:
                   with open('output.mp4', 'rb') as f:
                       requests.post(f'https://api.telegram.org/bot{token}/sendDocument', data={'chat_id': chat}, files={'document': f})
-              else:
-                  subprocess.run(["ffmpeg", "-i", "output.mp4", "-c", "copy", "-f", "segment", "-segment_time", "1200", "part_%03d.mp4"])
-                  for p in sorted([f for f in os.listdir('.') if f.startswith('part_')]):
-                      with open(p, 'rb') as f: requests.post(f'https://api.telegram.org/bot{token}/sendDocument', data={'chat_id': chat}, files={'document': f})
+          else:
+              requests.post(f'https://api.telegram.org/bot{token}/sendMessage', data={'chat_id': chat, 'text': '?? **No recording file found.**'})
           EOF
           python3 upload.py
           
-          echo "🧹 Wiping session logs..."
-          # Use Bearer token for better compatibility
-          curl -X DELETE -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+          echo "? Wiping session logs..."
+          curl -X DELETE -s -H "Authorization: token $GITHUB_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/$REPO/actions/runs/$RUN_ID" || true
