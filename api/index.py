@@ -68,7 +68,7 @@ def is_workflow_running():
     except: return False
 
 # ==========================================
-# 🤖 TELEGRAM BOT UI
+# 🤖 TELEGRAM BOT UI (FULL ENGLISH)
 # ==========================================
 
 def get_main_keyboard():
@@ -88,43 +88,44 @@ def send_welcome(message):
         "💀 **GHOST RECORDER PRO**\n"
         "━━━━━━━━━━━━━━━━━━━━━\n"
         "Advanced Meeting Control Interface Active.\n\n"
-        "🚀 `/go <url>` - Deploy Bot"
+        "**Quick Commands:**\n"
+        "🚀 `/go <url>` - Start Recording Session\n"
+        "📊 `/status` - Check System Usage\n"
+        "🛑 `/off` - Emergency Stop"
     )
     bot.send_message(message.chat.id, welcome_text, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
 @bot.message_handler(commands=['status'])
 def status_cmd(message):
     if not is_authorized(message): return
-
     visibility = get_repo_visibility()
-
     msg = "📊 **GHOST SYSTEM STATUS**\n━━━━━━━━━━━━━━━━━━━━━\n"
-    msg += f"🟢 **Runner:** {'ACTIVE' if is_workflow_running() else 'IDLE'}\n"
-    msg += f"📂 **Repo Mode:** `{visibility.upper()}`\n"
-
+    msg += f"🟢 **Runner Status:** {'ACTIVE' if is_workflow_running() else 'IDLE'}\n"
+    msg += f"📂 **Repository Mode:** `{visibility.upper()}`\n"
     if visibility == "public":
         msg += "🔋 **Usage Limit:** `UNLIMITED (Free)`\n"
-        msg += "✨ *Public repo mode enables infinite recording time.*"
+        msg += "✨ *Public repository mode enables infinite recording time.*"
     else:
         msg += "🔋 **Usage Limit:** `2,000 mins/month`\n"
-        msg += "⚠️ *Private repo has a 2000 minute cap.*"
-
+        msg += "⚠️ *Private repositories have a monthly minute cap.*"
     bot.send_message(message.chat.id, msg, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
 @bot.message_handler(commands=['go'])
 def start_recording(message):
     if not is_authorized(message): return
     try:
-        meet_url = message.text.split()[1]
+        parts = message.text.split()
+        if len(parts) < 2: raise ValueError()
+        meet_url = parts[1]
     except:
-        bot.reply_to(message, "⚠️ Usage: `/go <url>`")
+        bot.reply_to(message, "⚠️ **Usage:** `/go <meeting_url>`")
         return
 
     if is_workflow_running():
-        bot.reply_to(message, "⚠️ **Session Active.**")
+        bot.reply_to(message, "⚠️ **Session Active!** Please terminate the current session before starting a new one.")
         return
 
-    progress_msg = bot.reply_to(message, "⏳ **Deploying Ghost Runner...**", parse_mode="Markdown")
+    progress_msg = bot.reply_to(message, "⏳ **Deploying Ghost Runner...**\n*Allocating resources and setting up secure RDP tunnel.*", parse_mode="Markdown")
     
     global stop_flag, view_flag, full_flag, rec_flag
     stop_flag, view_flag, full_flag, rec_flag = "0", "0", "0", "0"
@@ -142,14 +143,17 @@ def start_recording(message):
                 f"✅ **Runner Active!**\n━━━━━━━━━━━━━━━━━━━━━\n"
                 f"📡 **Target:** `{meet_url}`\n"
                 f"⏱️ **Started:** {datetime.now().strftime('%H:%M:%S')}\n\n"
-                f"Instructions sent. Waiting for RDP...",
+                f"**Next Steps:**\n"
+                f"1. Wait for the **RDP Link** (approx. 40s).\n"
+                f"2. Open the link & join the meeting manually.\n"
+                f"3. Return here & click **Start Recording**.",
                 chat_id=message.chat.id, message_id=progress_msg.message_id,
                 parse_mode="Markdown", reply_markup=get_main_keyboard()
             )
         else:
-            bot.edit_message_text(f"❌ **GitHub Error:** {res.status_code}", chat_id=message.chat.id, message_id=progress_msg.message_id)
+            bot.edit_message_text(f"❌ **GitHub API Error:** {res.status_code}", chat_id=message.chat.id, message_id=progress_msg.message_id)
     except:
-        bot.edit_message_text("❌ **Failed.**", chat_id=message.chat.id, message_id=progress_msg.message_id)
+        bot.edit_message_text("❌ **Connection Failed.** Please check your PAT_TOKEN and REPO_NAME.", chat_id=message.chat.id, message_id=progress_msg.message_id)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('cb_'))
 def callback_handler(call):
@@ -164,39 +168,43 @@ def callback_handler(call):
     bot.answer_callback_query(call.id)
 
 def handle_live_view(chat_id):
-    if not is_workflow_running(): return
+    if not is_workflow_running():
+        bot.send_message(chat_id, "💤 **Runner is Offline.**")
+        return
     global view_flag
     view_flag = "1"
     create_or_update_github_variable("VIEW_FLAG", "1")
-    bot.send_message(chat_id, "📸 **Capturing...**")
+    bot.send_message(chat_id, "📸 **Signal Sent:** Capturing live screenshot...")
 
 def handle_rec_on(chat_id):
-    if not is_workflow_running(): return
+    if not is_workflow_running():
+        bot.send_message(chat_id, "💤 **Runner is Offline.**")
+        return
     global rec_flag
     rec_flag = "1"
     create_or_update_github_variable("REC_FLAG", "1")
-    bot.send_message(chat_id, "⏺️ **Recording Started.**")
+    bot.send_message(chat_id, "⏺️ **Recording Started!**\n*RDP tunnel has been closed to optimize performance.*", parse_mode="Markdown")
 
 def handle_rec_off(chat_id):
     if not is_workflow_running(): return
     global rec_flag
     rec_flag = "0"
     create_or_update_github_variable("REC_FLAG", "0")
-    bot.send_message(chat_id, "⏹️ **Recording Stopped.**")
+    bot.send_message(chat_id, "⏹️ **Recording Stopped.** Finalizing video file...")
 
 def handle_stop_bot(chat_id):
     if not is_workflow_running(): return
+    bot.send_message(chat_id, "🛑 **Termination Signal Sent.** Shutting down runner...")
     global stop_flag
     stop_flag = "1"
     create_or_update_github_variable("STOP_FLAG", "1")
-    bot.send_message(chat_id, "🛑 **Terminating Session.**")
 
 def handle_full_screen(chat_id):
     if not is_workflow_running(): return
+    bot.send_message(chat_id, "📺 **Fullscreen Command Sent.**")
     global full_flag
     full_flag = "1"
     create_or_update_github_variable("FULL_FLAG", "1")
-    bot.send_message(chat_id, "📺 **Fullscreen.**")
 
 @app.route('/api/command')
 def get_command():
