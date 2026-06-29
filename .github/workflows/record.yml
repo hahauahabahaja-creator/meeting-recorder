@@ -57,6 +57,9 @@ jobs:
         run: |
           # 1. Initialize PulseAudio virtual audio server
           pulseaudio -D --exit-idle-time=-1
+          pactl load-module module-null-sink sink_name=Virtual_Sink || true
+          pactl set-default-sink Virtual_Sink || true
+          pactl set-default-source Virtual_Sink.monitor || true
           
           # 2. Initialize Xvfb virtual display
           Xvfb :99 -screen 0 1366x768x24 &
