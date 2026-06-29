@@ -1,0 +1,172 @@
+name: Meet Recorder
+
+on:
+  workflow_dispatch:
+    inputs:
+      meet_url:
+        description: 'Google Meet, Zoom or Teams URL'
+        required: true
+        type: string
+
+jobs:
+  record:
+    name: 🎥 Record Meeting Session
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    
+    permissions:
+      contents: read
+      actions: write
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🐍 Setup Python Environment
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 🛠️ Install System Dependencies
+        run: |
+          sudo apt-get update
+          # Install audio/video virtual display requirements
+          sudo apt-get install -y xvfb ffmpeg pulseaudio jq scrot xdotool libgbm-dev libxshmfence1 libnss3
+          # Dynamically install libasound based on availability
+          sudo apt-get install -y libasound2t64 || sudo apt-get install -y libasound2 || true
+
+      - name: 📦 Install Python Dependencies
+        run: |
+          pip install --upgrade pip
+          pip install playwright requests playwright-stealth
+          playwright install chromium
+          playwright install-deps
+
+      - name: 🎥 Start Virtual Screen & Recording
+        env:
+          MEET_URL: ${{ github.event.inputs.meet_url }}
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
+          REPO_NAME: ${{ github.repository }}
+        run: |
+          # 1. Initialize PulseAudio virtual audio server
+          pulseaudio -D --exit-idle-time=-1
+          
+          # 2. Initialize Xvfb virtual display
+          Xvfb :99 -screen 0 1366x768x24 &
+          export DISPLAY=:99
+          
+          # 3. Launch Playwright bot script (runs directly from root)
+          python meet_bot.py &
+          BOT_PID=$!
+          echo "🤖 Bot started (PID: $BOT_PID)"
+          
+          # 4. Wait for browser initialization
+          sleep 20
+          
+          # 5. Launch FFmpeg to capture video (x11grab) and audio (pulse default)
+          ffmpeg -y -f x11grab -video_size 1366x768 -framerate 25 -i :99 -f pulse -i default -c:v libx264 -preset veryfast -crf 22 -pix_fmt yuv420p -c:a aac -b:a 128k -movflags +faststart output.mp4 > /dev/null 2>&1 &
+          FFMPEG_PID=$!
+          echo "🎥 FFmpeg capture started (PID: $FFMPEG_PID)"
+          
+          # 6. Monitor bot lifecycle
+          while true; do
+            if ! kill -0 $BOT_PID 2>/dev/null; then
+              echo "⚠️ Bot process terminated! Wrapping up FFmpeg recording..."
+              kill -SIGINT $FFMPEG_PID 2>/dev/null
+              break
+            fi
+            sleep 10
+          done
+          
+          # Wait for FFmpeg to finish writing
+          wait $FFMPEG_PID 2>/dev/null
+          echo "✅ Recording finalized successfully."
+
+      - name: 📤 Smart Upload to Telegram
+        if: always()
+        env:
+          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          cat << 'EOF' > upload.py
+          import os
+          import subprocess
+          import requests
+
+          bot_token = os.environ.get('BOT_TOKEN', '')
+          chat_id = os.environ.get('CHAT_ID', '')
+          video_file = 'output.mp4'
+
+          if not os.path.exists(video_file):
+              print("❌ No video file output.mp4 found.")
+              requests.post(f'https://api.telegram.org/bot{bot_token}/sendMessage', data={'chat_id': chat_id, 'text': '❌ Recording failed. No video file was generated.'})
+              exit(0)
+
+          file_size_mb = os.path.getsize(video_file) / (1024 * 1024)
+          print(f"🎬 Video generated size: {file_size_mb:.1f} MB")
+
+          # 50MB is the standard Telegram Bot API limit. We use 49MB to be safe.
+          if file_size_mb < 49:
+              print("📤 File is under 50MB. Uploading single file...")
+              requests.post(f'https://api.telegram.org/bot{bot_token}/sendMessage', data={'chat_id': chat_id, 'text': f'📹 **Recording Complete!**\nSize: {file_size_mb:.1f} MB\n📤 Uploading video...'})
+              with open(video_file, 'rb') as f:
+                  r = requests.post(f'https://api.telegram.org/bot{bot_token}/sendDocument', data={'chat_id': chat_id}, files={'document': f})
+                  print(f"Telegram API response: {r.status_code}")
+          else:
+              print("📤 File exceeds 50MB. Splitting into chunks using FFmpeg copy codec...")
+              requests.post(f'https://api.telegram.org/bot{bot_token}/sendMessage', data={'chat_id': chat_id, 'text': f'📹 **Recording Complete!**\nSize: {file_size_mb:.1f} MB\n⚠️ *File exceeds 50MB limit. Splitting into chunks for upload...*'})
+              
+              # Split into 45MB chunks (roughly 20 minutes each)
+              # Using -c copy to avoid re-encoding (takes less than 2 seconds)
+              split_cmd = [
+                  "ffmpeg", "-i", video_file,
+                  "-c", "copy", "-map", "0",
+                  "-f", "segment", "-segment_time", "1200", 
+                  "-reset_timestamps", "1", "chunk_%03d.mp4"
+              ]
+              subprocess.run(split_cmd)
+              
+              # Find and upload all chunks
+              chunks = sorted([f for f in os.listdir('.') if f.startswith('chunk_') and f.endswith('.mp4')])
+              
+              if not chunks:
+                  print("❌ Error: Splitting failed.")
+                  requests.post(f'https://api.telegram.org/bot{bot_token}/sendMessage', data={'chat_id': chat_id, 'text': '❌ Splitting failed. Unable to upload the recording.'})
+                  exit(0)
+                  
+              for i, chunk in enumerate(chunks):
+                  chunk_size = os.path.getsize(chunk) / (1024 * 1024)
+                  caption = f"🎥 **Recording Part {i+1} of {len(chunks)}**\nSize: {chunk_size:.1f} MB"
+                  print(f"📤 Uploading {chunk} ({chunk_size:.1f} MB)...")
+                  
+                  with open(chunk, 'rb') as f:
+                      r = requests.post(
+                          f'https://api.telegram.org/bot{bot_token}/sendDocument', 
+                          data={'chat_id': chat_id, 'caption': caption, 'parse_mode': 'Markdown'}, 
+                          files={'document': f}
+                      )
+                      print(f"Uploaded {chunk}: {r.status_code}")
+                  
+                  # Clean up chunk after upload
+                  os.remove(chunk)
+                  
+          EOF
+          python upload.py
+
+      - name: 🧹 Delete Workflow Run History
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          # Clean local video file
+          rm -rf output.mp4 *.png *.log upload.py
+          
+          # Delete this workflow run log from GitHub history using GitHub API to keep run history clean
+          curl -X DELETE -s \
+            -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/$REPO/actions/runs/$RUN_ID || true
