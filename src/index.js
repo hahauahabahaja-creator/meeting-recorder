@@ -35,59 +35,59 @@ bot.command('join', async (ctx) => {
     const vncUrl = await tunnel.startUIStream(vncPassword);
     if (vncUrl) {
       await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null, 
-        \`? **GHOST v3.0**\\n????????????????????\\n? **VNC Password:** \\\`\${vncPassword}\\\`\\n\\n?? **ACTION REQUIRED:** Open the link. Login. Click **Engage Recording**.\`,
-        { parse_mode: \u0027Markdown\u0027, ...keyboards.controlPanel(vncUrl) }
+        `? **GHOST v3.0**\n????????????????????\n? **VNC Password:** \`${vncPassword}\`\n\n?? **ACTION REQUIRED:** Open the link. Login. Click **Engage Recording**.`,
+        { parse_mode: 'Markdown', ...keyboards.controlPanel(vncUrl) }
       );
     }
-  } catch (err) { ctx.reply(\`? Boot Error: \${err.message}\`); }
+  } catch (err) { ctx.reply(`? Boot Error: ${err.message}`); }
 });
 
 bot.action('cb_record', async (ctx) => {
   tunnel.stopUIStream();
   activeFile = recorder.startRecording();
-  await ctx.editMessageText(\`?? **LIVE RECORDING ACTIVE**\\n????????????????????\\n? **System Health:** Stable ?\`, { parse_mode: \u0027Markdown\u0027, ...keyboards.recording() });
+  await ctx.editMessageText(`?? **LIVE RECORDING ACTIVE**\n????????????????????\n? **System Health:** Stable ?`, { parse_mode: 'Markdown', ...keyboards.recording() });
 });
 
 bot.action('cb_view', async (ctx) => {
-  const path \u003d await recorder.takeScreenshot();
+  const path = await recorder.takeScreenshot();
   if (path) { await ctx.replyWithPhoto({ source: path }); fs.unlinkSync(path); }
 });
 
 bot.action('cb_stop', async (ctx) => {
-  ctx.reply(\u0027? Finalizing and Wiping...\u0027);
+  ctx.reply('? Finalizing and Wiping...');
   await recorder.stop();
   tunnel.stopUIStream();
 
-  if (activeFile \u0026\u0026 fs.existsSync(activeFile)) {
-    const fileSizeInMB \u003d fs.statSync(activeFile).size / (1024 * 1024);
-    await ctx.reply(\`? Session Complete! (\${fileSizeInMB.toFixed(1)} MB)\`);
+  if (activeFile && fs.existsSync(activeFile)) {
+    const fileSizeInMB = fs.statSync(activeFile).size / (1024 * 1024);
+    await ctx.reply(`? Session Complete! (${fileSizeInMB.toFixed(1)} MB)`);
     
-    if (fileSizeInMB \u003c 45) {
+    if (fileSizeInMB < 45) {
       await ctx.replyWithDocument({ source: activeFile });
     } else {
-      execSync(\`ffmpeg -i \${activeFile} -c copy -f segment -segment_time 1200 -reset_timestamps 1 part_%03d.mp4\`);
-      const parts \u003d fs.readdirSync(\u0027.\u0027).filter(f \u003d\u003e f.startsWith(\u0027part_\u0027) \u0026\u0026 f.endsWith(\u0027.mp4\u0027)).sort();
+      execSync(`ffmpeg -i ${activeFile} -c copy -f segment -segment_time 1200 -reset_timestamps 1 part_%03d.mp4`);
+      const parts = fs.readdirSync('.').filter(f => f.startsWith('part_') && f.endsWith('.mp4')).sort();
       for (const p of parts) { await ctx.replyWithDocument({ source: p }); fs.unlinkSync(p); }
     }
 
-    if (model \u0026\u0026 vosk \u0026\u0026 wav) {
-      ctx.reply(\u0027?? **AI Transcription:** Converting speech to text...\u0027);
+    if (model && vosk && wav) {
+      ctx.reply('?? **AI Transcription:** Converting speech to text...');
       try {
-        const audioWav \u003d \`audio_\${Date.now()}.wav\`;
-        execSync(\`ffmpeg -i \${activeFile} -ar 16000 -ac 1 \${audioWav}\`);
-        const wfReader \u003d new wav.Reader();
-        const readable \u003d fs.createReadStream(audioWav);
-        let fullText \u003d "";
-        await new Promise((resolve) \u003d\u003e {
-          wfReader.on(\u0027format\u0027, (format) \u003d\u003e {
-            const rec \u003d new vosk.Recognizer({model: model, sampleRate: format.sampleRate});
-            wfReader.on(\u0027data\u0027, (data) \u003d\u003e { if (rec.acceptWaveform(data)) fullText +\u003d JSON.parse(rec.result()).text + " "; });
-            wfReader.on(\u0027end\u0027, () \u003d\u003e { fullText +\u003d JSON.parse(rec.finalResult()).text; rec.free(); resolve(); });
+        const audioWav = `audio_${Date.now()}.wav`;
+        execSync(`ffmpeg -i ${activeFile} -ar 16000 -ac 1 ${audioWav}`);
+        const wfReader = new wav.Reader();
+        const readable = fs.createReadStream(audioWav);
+        let fullText = "";
+        await new Promise((resolve) => {
+          wfReader.on('format', (format) => {
+            const rec = new vosk.Recognizer({model: model, sampleRate: format.sampleRate});
+            wfReader.on('data', (data) => { if (rec.acceptWaveform(data)) fullText += JSON.parse(rec.result()).text + " "; });
+            wfReader.on('end', () => { fullText += JSON.parse(rec.finalResult()).text; rec.free(); resolve(); });
           });
           readable.pipe(wfReader);
         });
-        const transcriptFile \u003d \`transcript_\${Date.now()}.txt\`;
-        fs.writeFileSync(transcriptFile, \`? GHOST TRANSCRIPTION\\n\\n\${fullText}\`);
+        const transcriptFile = `transcript_${Date.now()}.txt`;
+        fs.writeFileSync(transcriptFile, `? GHOST TRANSCRIPTION\n\n${fullText}`);
         await ctx.replyWithDocument({ source: transcriptFile });
         fs.unlinkSync(audioWav); fs.unlinkSync(transcriptFile);
       } catch (e) {}
@@ -96,14 +96,14 @@ bot.action('cb_stop', async (ctx) => {
   }
 
   try {
-    const repo \u003d process.env.GITHUB_REPOSITORY;
-    const token \u003d process.env.PAT_TOKEN;
-    const runId \u003d process.env.GITHUB_RUN_ID;
-    if (repo \u0026\u0026 token \u0026\u0026 runId) {
-      execSync(\`curl -L -X DELETE -H "Authorization: Bearer \${token}" https://api.github.com/repos/\${repo}/actions/runs/\${runId}\`);
+    const repo = process.env.GITHUB_REPOSITORY;
+    const token = process.env.PAT_TOKEN;
+    const runId = process.env.GITHUB_RUN_ID;
+    if (repo && token && runId) {
+      execSync(`curl -L -X DELETE -H "Authorization: Bearer ${token}" https://api.github.com/repos/${repo}/actions/runs/${runId}`);
     }
   } catch (e) {}
 });
 
 bot.launch();
-logger.success(\u0027GHOST v3.0 is Online.\u0027);
+logger.success('GHOST v3.0 is Online.');
