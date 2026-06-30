@@ -6,191 +6,104 @@ const { keyboards, templates } = require('./ui/keyboards');
 const logger = require('./utils/logger');
 const fs = require('fs');
 const { execSync } = require('child_process');
-const vosk = require('vosk');
-const wav = require('wav');
+
+let vosk = null; let wav = null;
+try { vosk = require('vosk'); wav = require('wav'); } catch (e) { console.log("Native modules not loaded."); }
 
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
 const ALLOWED_ID = process.env.ALLOWED_GROUP_ID || process.env.TELEGRAM_CHAT_ID;
 
-// Load Vosk Model (Free & Offline)
 let model;
-try {
-  vosk.setLogLevel(-1);
-  model = new vosk.Model('model');
-} catch (e) {
-  logger.error("Vosk Model not found. Transcription disabled.");
-}
+if (vosk) { try { vosk.setLogLevel(-1); model = new vosk.Model('model'); } catch (e) { console.log("Model not found."); } }
 
 let activeFile = null;
 
-// Middleware for authorization
 bot.use(async (ctx, next) => {
-  if (ctx.chat.id.toString() !== ALLOWED_ID.toString()) {
-    return ctx.reply('✖ **Access Denied.** Unauthorized User ID detected.');
-  }
+  if (ctx.chat.id.toString() !== ALLOWED_ID.toString()) return ctx.reply('? Access Denied.');
   await next();
 });
 
-bot.start((ctx) => {
-  ctx.replyWithMarkdown(templates.welcome(ctx.from.first_name), keyboards.main());
-});
+bot.start((ctx) => ctx.replyWithMarkdown(templates.welcome(ctx.from.first_name), keyboards.main()));
 
 bot.command('join', async (ctx) => {
   const url = ctx.message.text.split(' ')[1];
-  if (!url) return ctx.reply('⚠️ **Usage:** `/join <meeting_url>`');
-
-  const statusMsg = await ctx.reply('⏳ **Booting Remote Engine...**\nInitializing Xvfb and Puppeteer.');
-
+  if (!url) return ctx.reply('?? Usage: /join <url>');
+  const statusMsg = await ctx.reply('? Booting Ghost Engine...');
   try {
-    // 1. Launch Browser
     await recorder.launchBrowser(url);
-
-    // 2. Start UI Stream
     const vncPassword = Math.random().toString(36).slice(-8);
     const vncUrl = await tunnel.startUIStream(vncPassword);
-
     if (vncUrl) {
-      await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
-        `🤖 **GOGO RECORDER PANEL v3.0 [ULTRA]**\n━━━━━━━━━━━━━━━━━━━━━━━━\n💎 Status: 🟡 **Awaiting User Verification**\n🖥️ Virtual Display: **Active**\n\n🔑 **VNC Password:** \`${vncPassword}\`\n\n⚠️ **ACTION REQUIRED:** Open the link below. If it asks for a password, use the one given above. Once joined, click **Engage Low-Load Recording**.`,
-        { parse_mode: 'Markdown', ...keyboards.controlPanel(vncUrl) }
+      await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null, 
+        \`? **GHOST v3.0**\\n????????????????????\\n? **VNC Password:** \\\`\${vncPassword}\\\`\\n\\n?? **ACTION REQUIRED:** Open the link. Login. Click **Engage Recording**.\`,
+        { parse_mode: \u0027Markdown\u0027, ...keyboards.controlPanel(vncUrl) }
       );
-    } else {
-      ctx.reply('❌ **Tunnel Failure.** Could not establish Ngrok link.');
     }
-  } catch (err) {
-    logger.error(err.message);
-    ctx.reply(`❌ **Boot Error:** \`${err.message}\``);
-  }
+  } catch (err) { ctx.reply(\`? Boot Error: \${err.message}\`); }
 });
 
 bot.action('cb_record', async (ctx) => {
-  // 1. Kill UI Stream to save CPU
   tunnel.stopUIStream();
-
-  // 2. Start FFMPEG Recording
   activeFile = recorder.startRecording();
-
-  await ctx.editMessageText(
-    `⏺️ **LIVE RECORDING ACTIVE**\n━━━━━━━━━━━━━━━━━━━━━━━━\n⚡ **Eco-Mode:** Enabled (GUI Stream Paused)\n🔊 **Audio Input:** Stream Healthy (Stereo)\n📈 **System Health:** Stable 🟢`,
-    { parse_mode: 'Markdown', ...keyboards.recording() }
-  );
+  await ctx.editMessageText(\`?? **LIVE RECORDING ACTIVE**\\n????????????????????\\n? **System Health:** Stable ?\`, { parse_mode: \u0027Markdown\u0027, ...keyboards.recording() });
 });
 
 bot.action('cb_view', async (ctx) => {
-  const path = await recorder.takeScreenshot();
-  if (path) {
-    await ctx.replyWithPhoto({ source: path }, { caption: `📸 **Live View** - ${new Date().toLocaleTimeString()}` });
-    fs.unlinkSync(path);
-  }
+  const path \u003d await recorder.takeScreenshot();
+  if (path) { await ctx.replyWithPhoto({ source: path }); fs.unlinkSync(path); }
 });
 
 bot.action('cb_stop', async (ctx) => {
-  await handleStop(ctx);
-});
-
-async function handleStop(ctx) {
-  ctx.reply('🏁 **Wiping instance and finalizing video...**');
-
+  ctx.reply(\u0027? Finalizing and Wiping...\u0027);
   await recorder.stop();
   tunnel.stopUIStream();
 
-  if (activeFile && fs.existsSync(activeFile)) {
-    const stats = fs.statSync(activeFile);
-    const fileSizeInMB = stats.size / (1024 * 1024);
-
-    await ctx.reply(`✅ **Session Complete!** (${fileSizeInMB.toFixed(1)} MB)\n📤 **Starting upload...**`);
-
-    if (fileSizeInMB < 45) {
-      await ctx.replyWithDocument({ source: activeFile }, { caption: '🎬 **Meeting Recording (Original)**' });
+  if (activeFile \u0026\u0026 fs.existsSync(activeFile)) {
+    const fileSizeInMB \u003d fs.statSync(activeFile).size / (1024 * 1024);
+    await ctx.reply(\`? Session Complete! (\${fileSizeInMB.toFixed(1)} MB)\`);
+    
+    if (fileSizeInMB \u003c 45) {
+      await ctx.replyWithDocument({ source: activeFile });
     } else {
-      await ctx.reply('📂 **File is large, splitting into parts for Telegram...**');
-
-      try {
-        // Split into 40MB chunks
-        execSync(`ffmpeg -i ${activeFile} -c copy -f segment -segment_time 1200 -reset_timestamps 1 part_%03d.mp4`);
-        const parts = fs.readdirSync('.').filter(f => f.startsWith('part_') && f.endsWith('.mp4')).sort();
-
-        for (let i = 0; i < parts.length; i++) {
-          await ctx.replyWithDocument({ source: parts[i] }, { caption: `🎬 **Part ${i+1} of ${parts.length}**` });
-          fs.unlinkSync(parts[i]);
-        }
-      } catch (err) {
-        ctx.reply('❌ **Error during splitting:** ' + err.message);
-      }
+      execSync(\`ffmpeg -i \${activeFile} -c copy -f segment -segment_time 1200 -reset_timestamps 1 part_%03d.mp4\`);
+      const parts \u003d fs.readdirSync(\u0027.\u0027).filter(f \u003d\u003e f.startsWith(\u0027part_\u0027) \u0026\u0026 f.endsWith(\u0027.mp4\u0027)).sort();
+      for (const p of parts) { await ctx.replyWithDocument({ source: p }); fs.unlinkSync(p); }
     }
 
-    // 📝 FREE TRANSCRIPTION FEATURE (Offline Speech to Text)
-    if (model) {
-      ctx.reply('🎙️ **Free AI Transcription:** Converting speech to text (Offline)...');
+    if (model \u0026\u0026 vosk \u0026\u0026 wav) {
+      ctx.reply(\u0027?? **AI Transcription:** Converting speech to text...\u0027);
       try {
-        const audioWav = `audio_${Date.now()}.wav`;
-        const transcriptFile = `transcript_${Date.now()}.txt`;
-
-        // 1. Extract Audio from Video (Vosk needs WAV 16kHz Mono)
-        execSync(`ffmpeg -i ${activeFile} -ar 16000 -ac 1 ${audioWav}`);
-
-        // 2. Process with Vosk
-        const wfReader = new wav.Reader();
-        const readable = fs.createReadStream(audioWav);
-        let fullText = "";
-
-        await new Promise((resolve) => {
-          wfReader.on('format', (format) => {
-            const rec = new vosk.Recognizer({model: model, sampleRate: format.sampleRate});
-            wfReader.on('data', (data) => {
-              const res = rec.acceptWaveform(data);
-              if (res) {
-                fullText += JSON.parse(rec.result()).text + " ";
-              }
-            });
-            wfReader.on('end', () => {
-              fullText += JSON.parse(rec.finalResult()).text;
-              rec.free();
-              resolve();
-            });
+        const audioWav \u003d \`audio_\${Date.now()}.wav\`;
+        execSync(\`ffmpeg -i \${activeFile} -ar 16000 -ac 1 \${audioWav}\`);
+        const wfReader \u003d new wav.Reader();
+        const readable \u003d fs.createReadStream(audioWav);
+        let fullText \u003d "";
+        await new Promise((resolve) \u003d\u003e {
+          wfReader.on(\u0027format\u0027, (format) \u003d\u003e {
+            const rec \u003d new vosk.Recognizer({model: model, sampleRate: format.sampleRate});
+            wfReader.on(\u0027data\u0027, (data) \u003d\u003e { if (rec.acceptWaveform(data)) fullText +\u003d JSON.parse(rec.result()).text + " "; });
+            wfReader.on(\u0027end\u0027, () \u003d\u003e { fullText +\u003d JSON.parse(rec.finalResult()).text; rec.free(); resolve(); });
           });
           readable.pipe(wfReader);
         });
-
-        // 3. Save to Text File and Send
-        if (fullText.trim().length > 0) {
-          fs.writeFileSync(transcriptFile, `💀 GHOST FREE TRANSCRIPTION\n━━━━━━━━━━━━━━━━━━━━━━━━\n\n${fullText}`);
-          await ctx.replyWithDocument({ source: transcriptFile }, { caption: '📝 **Meeting Notes (Free Offline AI)**' });
-        } else {
-          ctx.reply('ℹ️ **Transcription Empty:** No clear speech detected.');
-        }
-
-        // Cleanup
-        if (fs.existsSync(audioWav)) fs.unlinkSync(audioWav);
-        if (fs.existsSync(transcriptFile)) fs.unlinkSync(transcriptFile);
-      } catch (err) {
-        ctx.reply('⚠️ **Transcription Failed:** ' + err.message);
-      }
-    } else {
-      ctx.reply('ℹ️ **Transcription Skip:** Local model not initialized.');
+        const transcriptFile \u003d \`transcript_\${Date.now()}.txt\`;
+        fs.writeFileSync(transcriptFile, \`? GHOST TRANSCRIPTION\\n\\n\${fullText}\`);
+        await ctx.replyWithDocument({ source: transcriptFile });
+        fs.unlinkSync(audioWav); fs.unlinkSync(transcriptFile);
+      } catch (e) {}
     }
-
     fs.unlinkSync(activeFile);
-    activeFile = null;
-  } else {
-    ctx.reply('🏁 **Instance closed.** No recording was generated.');
   }
 
-  // 🏁 GHOST MODE: Delete Workflow History
-  ctx.reply('🧹 **Ghost Mode: Wiping GitHub Activity Logs...**');
   try {
-    const repo = process.env.GITHUB_REPOSITORY;
-    const token = process.env.PAT_TOKEN;
-    const runId = process.env.GITHUB_RUN_ID;
-    if (repo && token && runId) {
-      execSync(`curl -L -X DELETE -H "Authorization: Bearer ${token}" -H "Accept: application/vnd.github+json" https://api.github.com/repos/${repo}/actions/runs/${runId}`);
+    const repo \u003d process.env.GITHUB_REPOSITORY;
+    const token \u003d process.env.PAT_TOKEN;
+    const runId \u003d process.env.GITHUB_RUN_ID;
+    if (repo \u0026\u0026 token \u0026\u0026 runId) {
+      execSync(\`curl -L -X DELETE -H "Authorization: Bearer \${token}" https://api.github.com/repos/\${repo}/actions/runs/\${runId}\`);
     }
   } catch (e) {}
-}
+});
 
 bot.launch();
-logger.success('Ghost Recorder Bot is online and listening.');
-
-// Enable graceful stop
-process.once('SIGINT', () => bot.stop('SIGINT'));
-process.once('SIGTERM', () => bot.stop('SIGTERM'));
+logger.success(\u0027GHOST v3.0 is Online.\u0027);
