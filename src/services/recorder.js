@@ -61,8 +61,8 @@ class RecorderService {
     const outputFile = `recording_${timestamp}.mp4`;
     logger.system(`Starting Zero-Lag FFMPEG Pipe: ${outputFile}`);
 
-    // Optimized FFMPEG command for 1080p 30fps
-    // Captures X11 screen and PulseAudio internal monitor
+    // Optimized FFMPEG command for High-Quality 1080p
+    // High Bitrate and slower preset for better clarity
     this.ffmpegProcess = spawn('ffmpeg', [
       '-y',
       '-f', 'x11grab',
@@ -72,11 +72,11 @@ class RecorderService {
       '-f', 'pulse',
       '-i', 'default',
       '-c:v', 'libx264',
-      '-preset', 'ultrafast',
-      '-crf', '28',
+      '-preset', 'medium', // Better quality than ultrafast
+      '-crf', '20',        // Lower CRF = Higher Quality
       '-pix_fmt', 'yuv420p',
       '-c:a', 'aac',
-      '-b:a', '128k',
+      '-b:a', '192k',      // Higher Audio Bitrate
       outputFile
     ]);
 
