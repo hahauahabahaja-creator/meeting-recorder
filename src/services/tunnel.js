@@ -36,7 +36,7 @@ class TunnelService {
           try {
             const res = await axios.get('http://localhost:4040/api/tunnels');
             const url = res.data.tunnels[0].public_url;
-            if (url) return `${url}/vnc_lite.html?password=${vncPassword}`;
+            if (url) return `${url}/vnc.html?autoconnect=true&password=${vncPassword}`;
           } catch (e) {}
         }
       }
