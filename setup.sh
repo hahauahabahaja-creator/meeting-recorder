@@ -37,4 +37,15 @@ echo "🖥️ Initializing Xvfb :99 (1080p)..."
 Xvfb :99 -screen 0 1920x1080x24 &
 export DISPLAY=:99
 
+# 5. Custom Branding for noVNC (GHOST THEME)
+# ... (existing branding code) ...
+
+# 6. Download Free Speech-to-Text Model (Vosk)
+echo "🎙️ Downloading Free Offline Transcription Model..."
+mkdir -p model
+curl -L https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip -o model.zip
+unzip model.zip -d model
+mv model/vosk-model-small-en-us-0.15/* model/
+rm -rf model.zip
+
 echo "✅ Environment Setup Complete."
