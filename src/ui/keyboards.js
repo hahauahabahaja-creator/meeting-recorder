@@ -20,19 +20,13 @@ const keyboards = {
 
 const templates = {
   welcome: (name) => `
-💎 **GOGO RECORDER PRO v3.0**
+💀 **GHOST v3.0**
 ━━━━━━━━━━━━━━━━━━━━━━━━
 Welcome, **${name}**.
-System is idling. Waiting for orders.
-
-**Core Commands:**
-🚀 \`/join <url>\` - Boot remote browser
-⏺ \`/record\` - Start direct media capture
-⏹ \`/stop\` - Wipe instance & upload
 `,
 
   status: (cpu, ram, status) => `
-🤖 **SYSTEM HEALTH DASHBOARD**
+🤖 **GHOST DASHBOARD**
 ━━━━━━━━━━━━━━━━━━━━━━━━
 💎 Status: ${status}
 🖥️ Load: \`[${'█'.repeat(Math.floor(cpu/10))}${'░'.repeat(10-Math.floor(cpu/10))}]\` ${cpu}%
