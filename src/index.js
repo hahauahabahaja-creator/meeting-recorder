@@ -8,9 +8,18 @@ const fs = require('fs');
 const { execSync } = require('child_process');
 const express = require('express');
 
-// Initialize Express for Render Port Binding
+// Initialize Express for Render Port Binding & API
 const app = express();
 const PORT = process.env.PORT || 10000;
+
+// API endpoint for GitHub to fetch Auth IDs from Render
+app.get('/api/auth', (req, res) => {
+  res.json({
+    personal_id: process.env.TELEGRAM_CHAT_ID || "",
+    group_id: process.env.ALLOWED_GROUP_ID || ""
+  });
+});
+
 app.get('/', (req, res) => res.send('GHOST v3.0 is active.'));
 app.get('/ping', (req, res) => res.send('pong'));
 app.listen(PORT, () => console.log(`[SYSTEM] Port binding active on ${PORT}`));
@@ -20,34 +29,30 @@ try { vosk = require('vosk'); wav = require('wav'); } catch (e) { console.log("N
 
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
 
-// Load Vosk Model (Free & Offline)
+// Load Vosk Model
 let model;
 if (vosk) {
   try {
     vosk.setLogLevel(-1);
     model = new vosk.Model('model');
-  } catch (e) {
-    console.log("Vosk Model not found.");
-  }
+  } catch (e) { console.log("Vosk Model not found."); }
 }
 
 let activeFile = null;
 
-// Middleware for authorization (Ultra-Robust Fix)
+// Middleware: Uses Render's Environment Variables
 bot.use(async (ctx, next) => {
   const chatId = String(ctx.chat.id);
   const allowedGroup = String(process.env.ALLOWED_GROUP_ID || "");
   const personalId = String(process.env.TELEGRAM_CHAT_ID || "");
 
-  // Check if either matches
   const isAuthorized = (chatId === allowedGroup) || (chatId === personalId);
 
   if (!isAuthorized) {
-    // Helpful message for the user to find their ID
     if (ctx.chat.type === 'private') {
-      return ctx.replyWithMarkdown(`? **Access Denied.**\n\nYour ID: \`${chatId}\` is not authorized.\n\n**To fix this:**\n1. Copy the ID above.\n2. Add it to GitHub Secrets as \`TELEGRAM_CHAT_ID\`.`);
+      return ctx.replyWithMarkdown(`? **Access Denied.**\n\nYour ID: \`${chatId}\` is not authorized.\n\n**To fix this:**\nAdd this ID to **Render Environment Variables** as \`TELEGRAM_CHAT_ID\`.`);
     }
-    return; // Ignore unauthorized groups
+    return;
   }
   await next();
 });
@@ -96,10 +101,7 @@ bot.action('cb_stop', async (ctx) => {
     } else {
       execSync(`ffmpeg -i ${activeFile} -c copy -f segment -segment_time 1200 -reset_timestamps 1 part_%03d.mp4`);
       const parts = fs.readdirSync('.').filter(f => f.startsWith('part_') && f.endsWith('.mp4')).sort();
-      for (const p of parts) {
-        await ctx.replyWithDocument({ source: p });
-        fs.unlinkSync(p);
-      }
+      for (const p of parts) { await ctx.replyWithDocument({ source: p }); fs.unlinkSync(p); }
     }
 
     if (model && vosk && wav) {
@@ -121,8 +123,7 @@ bot.action('cb_stop', async (ctx) => {
         const transcriptFile = `transcript_${Date.now()}.txt`;
         fs.writeFileSync(transcriptFile, `? GHOST TRANSCRIPTION\n\n${fullText}`);
         await ctx.replyWithDocument({ source: transcriptFile });
-        fs.unlinkSync(audioWav);
-        fs.unlinkSync(transcriptFile);
+        fs.unlinkSync(audioWav); fs.unlinkSync(transcriptFile);
       } catch (e) {}
     }
     fs.unlinkSync(activeFile);
