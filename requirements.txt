@@ -1,5 +1,24 @@
-pyTelegramBotAPI==4.20.0
-Flask==3.0.2
-requests==2.31.0
-playwright==1.48.0
-playwright-stealth==1.0.6
+{
+  "name": "ghost-recorder-pro-v3",
+  "version": "3.0.0",
+  "description": "Advanced Meeting Recorder with Hybrid Low-Load Mechanism",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js"
+  },
+  "dependencies": {
+    "telegraf": "^4.16.3",
+    "puppeteer": "^23.6.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "axios": "^1.6.8",
+    "dotenv": "^16.4.5",
+    "form-data": "^4.0.0",
+    "vosk": "^0.3.32",
+    "wav": "^1.0.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  }
+}
