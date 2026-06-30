@@ -88,7 +88,7 @@ def start_recording():
         # Optimized for quality and low lag on lightweight setup
         cmd = [
             "ffmpeg", "-y", "-thread_queue_size", "4096",
-            "-f", "x11grab", "-video_size", "1366x768", "-framerate", "30", "-i", ":99",
+            "-f", "x11grab", "-video_size", "1280x720", "-framerate", "30", "-i", ":99",
             "-f", "pulse", "-i", "default",
             "-c:v", "libx264", "-preset", "ultrafast", "-crf", "18",
             "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
@@ -137,7 +137,7 @@ def run_bot():
             "--disable-blink-features=AutomationControlled", # Anti-bot
             "--use-fake-ui-for-media-stream",
             "--use-fake-device-for-media-stream",
-            "--window-size=1366,768",
+            "--window-size=1280,720",
             "--disable-dev-shm-usage",
             "--enable-unsafe-swiftshader", # For smooth rendering without GPU
             "--use-gl=angle",
@@ -146,7 +146,7 @@ def run_bot():
 
         # REALISTIC USER AGENT & FINGERPRINT
         context = browser.new_context(
-            viewport={'width': 1366, 'height': 768},
+            viewport={'width': 1280, 'height': 720},
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
             permissions=['camera', 'microphone'],
             locale="en-US",
@@ -158,7 +158,31 @@ def run_bot():
         stealth_sync(page)
 
         log(f"🌐 Navigating to meeting: {MEET_URL}")
-        page.goto(MEET_URL, wait_until="domcontentloaded", timeout=60000)
+        page.goto(MEET_URL, wait_until="networkidle", timeout=60000)
+
+        # AUTO-JOIN LOGIC FOR GOOGLE MEET
+        try:
+            if "meet.google.com" in MEET_URL:
+                log("🔍 Detecting Google Meet join buttons...")
+                # Dismiss "Dismiss" or "Got it" buttons if any
+                page.locator("button:has-text('Dismiss'), button:has-text('Got it')").click(timeout=5000).catch(lambda _: None)
+
+                # Turn off mic and camera if possible (shortcuts: Ctrl+D, Ctrl+E)
+                log("🔇 Turning off mic and camera...")
+                page.keyboard.press("Control+d")
+                page.keyboard.press("Control+e")
+                time.sleep(2)
+
+                # Click "Join now" or "Ask to join"
+                join_button = page.locator("button:has-text('Join now'), button:has-text('Ask to join')")
+                if join_button.is_visible():
+                    log("✅ Clicking Join button...")
+                    join_button.click()
+                    send_telegram("🤖 **Auto-Join:** Clicked 'Join now/Ask to join' button.")
+                else:
+                    log("⚠️ Join button not found automatically. Please join via RDP.")
+        except Exception as e:
+            log(f"⚠️ Auto-join error: {e}")
 
         recording_active = False
         start_time = time.time()
@@ -199,6 +223,21 @@ def run_bot():
                     send_telegram("📺 Fullscreen mode enabled.")
                 except: pass
                 set_github_variable("FULL_FLAG", "0")
+
+            # Prevent idle timeout (Move mouse randomly)
+            if int(time.time()) % 60 < 5:
+                try:
+                    x, y = random.randint(100, 1000), random.randint(100, 600)
+                    page.mouse.move(x, y)
+
+                    # Auto-Stop if meeting ended (Google Meet specific)
+                    if "meet.google.com" in MEET_URL:
+                        if page.locator("text='You're the only one here'").is_visible() or \
+                           page.locator("text='Meeting ended'").is_visible():
+                            log("👋 Meeting seems to have ended. Shutting down...")
+                            send_telegram("👋 **Meeting Ended:** Runner detected empty room or ended session.")
+                            break
+                except: pass
 
             time.sleep(5)
 
