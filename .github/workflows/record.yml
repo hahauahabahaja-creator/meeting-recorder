@@ -16,7 +16,6 @@ jobs:
   record:
     name: 🎥 Ghost Lite Session
     runs-on: ubuntu-latest
-    # Using the latest stable Playwright container
     container:
       image: mcr.microsoft.com/playwright:v1.48.0-jammy
       options: --user root
@@ -48,13 +47,12 @@ jobs:
           NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
           HOME: /root
         run: |
-          # 1. Setup Audio (Root Mode)
-          # Initialize PulseAudio in system mode to avoid permission issues in Docker
+          # 1. Setup Audio (System Mode for Root in Container)
           mkdir -p /var/run/pulse /root/.config/pulse
           pulseaudio -D --system --disallow-exit --disallow-module-loading --fail=no || true
           
           # Wait for PulseAudio and create Virtual Sink
-          sleep 3
+          sleep 5
           pactl load-module module-null-sink sink_name=Virtual_Sink || true
           pactl set-default-sink Virtual_Sink || true
           pactl set-default-source Virtual_Sink.monitor || true
@@ -64,7 +62,7 @@ jobs:
           export DISPLAY=:99
           sleep 2
           
-          # 3. VNC Server (Full Control & Optimized)
+          # 3. VNC Server (High-Performance settings)
           VNC_PASS=$(openssl rand -hex 4)
           export VNC_PASS
           x11vnc -display :99 -forever -shared -bg -passwd "$VNC_PASS" -rfbport 5900 -listen 0.0.0.0 -noxdamage -ncache 10 &
@@ -87,35 +85,41 @@ jobs:
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
         run: |
-          # Upload Recording
+          # 1. Smart Upload logic for Telegram
           cat << 'EOF' > upload.py
-          import os, requests, subprocess
+          import os, requests, subprocess, time
           token = os.environ.get('BOT_TOKEN')
           chat = os.environ.get('CHAT_ID')
           if os.path.exists('output.mp4'):
               size = os.path.getsize('output.mp4') / (1024*1024)
-              requests.post(f'https://api.telegram.org/bot{token}/sendMessage', data={'chat_id': chat, 'text': f'📹 **Session Complete!** ({size:.1f} MB)\nUploading now...'})
+              requests.post(f'https://api.telegram.org/bot{token}/sendMessage', data={'chat_id': chat, 'text': f'📹 **Session Complete!** ({size:.1f} MB)\n📤 **Starting upload to Telegram...**', 'parse_mode': 'Markdown'})
+              
               if size < 49:
                   with open('output.mp4', 'rb') as f:
-                      requests.post(f'https://api.telegram.org/bot{token}/sendDocument', data={'chat_id': chat}, files={'document': f})
+                      requests.post(f'https://api.telegram.org/bot{token}/sendDocument', data={'chat_id': chat, 'caption': '🎬 **Meeting Recording**'}, files={'document': f})
               else:
-                  subprocess.run(["ffmpeg", "-i", "output.mp4", "-c", "copy", "-f", "segment", "-segment_time", "1200", "part_%03d.mp4"])
-                  for p in sorted([f for f in os.listdir('.') if f.startswith('part_')]):
-                      with open(p, 'rb') as f: 
-                          requests.post(f'https://api.telegram.org/bot{token}/sendDocument', data={'chat_id': chat}, files={'document': f})
+                  requests.post(f'https://api.telegram.org/bot{token}/sendMessage', data={'chat_id': chat, 'text': '📂 *File is large, splitting into parts...*', 'parse_mode': 'Markdown'})
+                  subprocess.run(["ffmpeg", "-i", "output.mp4", "-c", "copy", "-f", "segment", "-segment_time", "1200", "-reset_timestamps", "1", "part_%03d.mp4"])
+                  chunks = sorted([f for f in os.listdir('.') if f.startswith('part_')])
+                  for i, chunk in enumerate(chunks):
+                      with open(chunk, 'rb') as f:
+                          requests.post(f'https://api.telegram.org/bot{token}/sendDocument', data={'chat_id': chat, 'caption': f'🎬 **Part {i+1} of {len(chunks)}**'}, files={'document': f})
+                      os.remove(chunk)
+              
+              requests.post(f'https://api.telegram.org/bot{token}/sendMessage', data={'chat_id': chat, 'text': '✨ **Upload Successful!** Cleaning up system logs...', 'parse_mode': 'Markdown'})
           else:
-              requests.post(f'https://api.telegram.org/bot{token}/sendMessage', data={'chat_id': chat, 'text': '🏁 **Runner Session Closed.**'})
+              requests.post(f'https://api.telegram.org/bot{token}/sendMessage', data={'chat_id': chat, 'text': '🏁 **Runner Session Closed.** No recording file was generated.'})
           EOF
           python3 upload.py
           
-          # Ghost Mode Cleanup: Delete all run history
+          # 2. Ghost Mode: Delete current and all previous runs to keep Actions history empty
           echo "🧹 Wiping session logs from GitHub..."
           # Delete current run
           curl -X DELETE -s -H "Authorization: Bearer $GITHUB_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/$REPO/actions/runs/$RUN_ID" || true
           
-          # Delete all previous runs of this workflow
+          # Delete all previous runs of this workflow to keep it 100% clean
           workflow_id=$(curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
             "https://api.github.com/repos/$REPO/actions/workflows/record.yml" | jq -r '.id')
           
@@ -126,3 +130,4 @@ jobs:
               curl -X DELETE -s -H "Authorization: Bearer $GITHUB_TOKEN" \
               "https://api.github.com/repos/$REPO/actions/runs/{}" || true
           fi
+          echo "✨ GHOST MODE: All history wiped."
