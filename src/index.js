@@ -6,9 +6,20 @@ const { keyboards, templates } = require('./ui/keyboards');
 const logger = require('./utils/logger');
 const fs = require('fs');
 const { execSync } = require('child_process');
+const vosk = require('vosk');
+const wav = require('wav');
 
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
 const ALLOWED_ID = process.env.ALLOWED_GROUP_ID || process.env.TELEGRAM_CHAT_ID;
+
+// Load Vosk Model (Free & Offline)
+let model;
+try {
+  vosk.setLogLevel(-1);
+  model = new vosk.Model('model');
+} catch (e) {
+  logger.error("Vosk Model not found. Transcription disabled.");
+}
 
 let activeFile = null;
 
@@ -40,7 +51,7 @@ bot.command('join', async (ctx) => {
 
     if (vncUrl) {
       await ctx.telegram.editMessageText(ctx.chat.id, statusMsg.message_id, null,
-        `🤖 **GOGO RECORDER PANEL v3.0 [ULTRA]**\n━━━━━━━━━━━━━━━━━━━━━━━━\n💎 Status: 🟡 **Awaiting User Verification**\n🖥️ Virtual Display: **Active**\n\n⚠️ **ACTION REQUIRED:** Open the link below to join the meeting manually. Once joined, click **Engage Low-Load Recording**.`,
+        `🤖 **GOGO RECORDER PANEL v3.0 [ULTRA]**\n━━━━━━━━━━━━━━━━━━━━━━━━\n💎 Status: 🟡 **Awaiting User Verification**\n🖥️ Virtual Display: **Active**\n\n🔑 **VNC Password:** \`${vncPassword}\`\n\n⚠️ **ACTION REQUIRED:** Open the link below. If it asks for a password, use the one given above. Once joined, click **Engage Low-Load Recording**.`,
         { parse_mode: 'Markdown', ...keyboards.controlPanel(vncUrl) }
       );
     } else {
@@ -89,11 +100,74 @@ async function handleStop(ctx) {
 
     await ctx.reply(`✅ **Session Complete!** (${fileSizeInMB.toFixed(1)} MB)\n📤 **Starting upload...**`);
 
-    // Logic for splitting files if > 50MB (simplified for now)
-    if (fileSizeInMB < 49) {
-      await ctx.replyWithDocument({ source: activeFile }, { caption: '🎬 **Meeting Recording**' });
+    if (fileSizeInMB < 45) {
+      await ctx.replyWithDocument({ source: activeFile }, { caption: '🎬 **Meeting Recording (Original)**' });
     } else {
-      ctx.reply('📂 **File is large.** Please download from the server or use a custom upload service.');
+      await ctx.reply('📂 **File is large, splitting into parts for Telegram...**');
+
+      try {
+        // Split into 40MB chunks
+        execSync(`ffmpeg -i ${activeFile} -c copy -f segment -segment_time 1200 -reset_timestamps 1 part_%03d.mp4`);
+        const parts = fs.readdirSync('.').filter(f => f.startsWith('part_') && f.endsWith('.mp4')).sort();
+
+        for (let i = 0; i < parts.length; i++) {
+          await ctx.replyWithDocument({ source: parts[i] }, { caption: `🎬 **Part ${i+1} of ${parts.length}**` });
+          fs.unlinkSync(parts[i]);
+        }
+      } catch (err) {
+        ctx.reply('❌ **Error during splitting:** ' + err.message);
+      }
+    }
+
+    // 📝 FREE TRANSCRIPTION FEATURE (Offline Speech to Text)
+    if (model) {
+      ctx.reply('🎙️ **Free AI Transcription:** Converting speech to text (Offline)...');
+      try {
+        const audioWav = `audio_${Date.now()}.wav`;
+        const transcriptFile = `transcript_${Date.now()}.txt`;
+
+        // 1. Extract Audio from Video (Vosk needs WAV 16kHz Mono)
+        execSync(`ffmpeg -i ${activeFile} -ar 16000 -ac 1 ${audioWav}`);
+
+        // 2. Process with Vosk
+        const wfReader = new wav.Reader();
+        const readable = fs.createReadStream(audioWav);
+        let fullText = "";
+
+        await new Promise((resolve) => {
+          wfReader.on('format', (format) => {
+            const rec = new vosk.Recognizer({model: model, sampleRate: format.sampleRate});
+            wfReader.on('data', (data) => {
+              const res = rec.acceptWaveform(data);
+              if (res) {
+                fullText += JSON.parse(rec.result()).text + " ";
+              }
+            });
+            wfReader.on('end', () => {
+              fullText += JSON.parse(rec.finalResult()).text;
+              rec.free();
+              resolve();
+            });
+          });
+          readable.pipe(wfReader);
+        });
+
+        // 3. Save to Text File and Send
+        if (fullText.trim().length > 0) {
+          fs.writeFileSync(transcriptFile, `💀 GHOST FREE TRANSCRIPTION\n━━━━━━━━━━━━━━━━━━━━━━━━\n\n${fullText}`);
+          await ctx.replyWithDocument({ source: transcriptFile }, { caption: '📝 **Meeting Notes (Free Offline AI)**' });
+        } else {
+          ctx.reply('ℹ️ **Transcription Empty:** No clear speech detected.');
+        }
+
+        // Cleanup
+        if (fs.existsSync(audioWav)) fs.unlinkSync(audioWav);
+        if (fs.existsSync(transcriptFile)) fs.unlinkSync(transcriptFile);
+      } catch (err) {
+        ctx.reply('⚠️ **Transcription Failed:** ' + err.message);
+      }
+    } else {
+      ctx.reply('ℹ️ **Transcription Skip:** Local model not initialized.');
     }
 
     fs.unlinkSync(activeFile);
@@ -101,6 +175,17 @@ async function handleStop(ctx) {
   } else {
     ctx.reply('🏁 **Instance closed.** No recording was generated.');
   }
+
+  // 🏁 GHOST MODE: Delete Workflow History
+  ctx.reply('🧹 **Ghost Mode: Wiping GitHub Activity Logs...**');
+  try {
+    const repo = process.env.GITHUB_REPOSITORY;
+    const token = process.env.PAT_TOKEN;
+    const runId = process.env.GITHUB_RUN_ID;
+    if (repo && token && runId) {
+      execSync(`curl -L -X DELETE -H "Authorization: Bearer ${token}" -H "Accept: application/vnd.github+json" https://api.github.com/repos/${repo}/actions/runs/${runId}`);
+    }
+  } catch (e) {}
 }
 
 bot.launch();
