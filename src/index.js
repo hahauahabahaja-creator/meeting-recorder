@@ -19,15 +19,27 @@ let vosk = null; let wav = null;
 try { vosk = require('vosk'); wav = require('wav'); } catch (e) { console.log("Native modules not loaded."); }
 
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
-const ALLOWED_ID = process.env.ALLOWED_GROUP_ID || process.env.TELEGRAM_CHAT_ID;
+const ALLOWED_GROUP_ID = process.env.ALLOWED_GROUP_ID;
+const PERSONAL_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
 let model;
-if (vosk) { try { vosk.setLogLevel(-1); model = new vosk.Model('model'); } catch (e) { console.log("Model not found."); } }
+// ... (existing model loading code) ...
 
 let activeFile = null;
 
+// Middleware for authorization (Allows both Personal Chat AND Group Chat)
 bot.use(async (ctx, next) => {
-  if (ctx.chat.id.toString() !== ALLOWED_ID.toString()) return ctx.reply('? Access Denied.');
+  const chatId = ctx.chat.id.toString();
+  const isAllowedGroup = ALLOWED_GROUP_ID && chatId === ALLOWED_GROUP_ID.toString();
+  const isPersonalChat = PERSONAL_CHAT_ID && chatId === PERSONAL_CHAT_ID.toString();
+
+  if (!isAllowedGroup && !isPersonalChat) {
+    // Only reply if it's a private chat, to avoid spamming unauthorized groups
+    if (ctx.chat.type === 'private') {
+      return ctx.reply('? **Access Denied.** This bot is private.');
+    }
+    return; // Ignore messages from other groups
+  }
   await next();
 });
 
