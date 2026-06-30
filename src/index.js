@@ -19,26 +19,35 @@ let vosk = null; let wav = null;
 try { vosk = require('vosk'); wav = require('wav'); } catch (e) { console.log("Native modules not loaded."); }
 
 const bot = new Telegraf(process.env.TELEGRAM_BOT_TOKEN);
-const ALLOWED_GROUP_ID = process.env.ALLOWED_GROUP_ID;
-const PERSONAL_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
+// Load Vosk Model (Free & Offline)
 let model;
-// ... (existing model loading code) ...
+if (vosk) {
+  try {
+    vosk.setLogLevel(-1);
+    model = new vosk.Model('model');
+  } catch (e) {
+    console.log("Vosk Model not found.");
+  }
+}
 
 let activeFile = null;
 
-// Middleware for authorization (Allows both Personal Chat AND Group Chat)
+// Middleware for authorization (Ultra-Robust Fix)
 bot.use(async (ctx, next) => {
-  const chatId = ctx.chat.id.toString();
-  const isAllowedGroup = ALLOWED_GROUP_ID && chatId === ALLOWED_GROUP_ID.toString();
-  const isPersonalChat = PERSONAL_CHAT_ID && chatId === PERSONAL_CHAT_ID.toString();
+  const chatId = String(ctx.chat.id);
+  const allowedGroup = String(process.env.ALLOWED_GROUP_ID || "");
+  const personalId = String(process.env.TELEGRAM_CHAT_ID || "");
 
-  if (!isAllowedGroup && !isPersonalChat) {
-    // Only reply if it's a private chat, to avoid spamming unauthorized groups
+  // Check if either matches
+  const isAuthorized = (chatId === allowedGroup) || (chatId === personalId);
+
+  if (!isAuthorized) {
+    // Helpful message for the user to find their ID
     if (ctx.chat.type === 'private') {
-      return ctx.reply('? **Access Denied.** This bot is private.');
+      return ctx.replyWithMarkdown(`? **Access Denied.**\n\nYour ID: \`${chatId}\` is not authorized.\n\n**To fix this:**\n1. Copy the ID above.\n2. Add it to GitHub Secrets as \`TELEGRAM_CHAT_ID\`.`);
     }
-    return; // Ignore messages from other groups
+    return; // Ignore unauthorized groups
   }
   await next();
 });
@@ -87,7 +96,10 @@ bot.action('cb_stop', async (ctx) => {
     } else {
       execSync(`ffmpeg -i ${activeFile} -c copy -f segment -segment_time 1200 -reset_timestamps 1 part_%03d.mp4`);
       const parts = fs.readdirSync('.').filter(f => f.startsWith('part_') && f.endsWith('.mp4')).sort();
-      for (const p of parts) { await ctx.replyWithDocument({ source: p }); fs.unlinkSync(p); }
+      for (const p of parts) {
+        await ctx.replyWithDocument({ source: p });
+        fs.unlinkSync(p);
+      }
     }
 
     if (model && vosk && wav) {
@@ -109,7 +121,8 @@ bot.action('cb_stop', async (ctx) => {
         const transcriptFile = `transcript_${Date.now()}.txt`;
         fs.writeFileSync(transcriptFile, `? GHOST TRANSCRIPTION\n\n${fullText}`);
         await ctx.replyWithDocument({ source: transcriptFile });
-        fs.unlinkSync(audioWav); fs.unlinkSync(transcriptFile);
+        fs.unlinkSync(audioWav);
+        fs.unlinkSync(transcriptFile);
       } catch (e) {}
     }
     fs.unlinkSync(activeFile);
