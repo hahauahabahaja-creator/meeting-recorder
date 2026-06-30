@@ -46,4 +46,8 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
           ALLOWED_GROUP_ID: ${{ secrets.ALLOWED_GROUP_ID }}
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: npm start
