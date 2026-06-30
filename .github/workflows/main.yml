@@ -1,0 +1,49 @@
+name: 🛡️ GHOST RECORDER PRO v3.0
+
+on:
+  workflow_dispatch: # Allows manual start from GitHub UI
+  schedule:
+    - cron: '0 */6 * * *' # Optional: Keep alive check every 6 hours
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360 # 6 hours maximum meeting time
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🟢 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: 📦 Install Dependencies
+        run: |
+          npm install
+          sudo apt-get update
+          sudo apt-get install -y xvfb ffmpeg pulseaudio x11vnc novnc websockify python3-pip curl jq
+
+      - name: 🔊 Configure Audio & Display
+        run: |
+          # Initialize PulseAudio
+          pulseaudio -D --exit-idle-time=-1 || true
+          sleep 2
+          pactl load-module module-null-sink sink_name=Virtual_Sink sink_properties=device.description=Virtual_Sink || true
+          pactl set-default-sink Virtual_Sink || true
+          pactl set-default-source Virtual_Sink.monitor || true
+          
+          # Initialize Xvfb
+          Xvfb :99 -screen 0 1920x1080x24 &
+          echo "DISPLAY=:99" >> $GITHUB_ENV
+
+      - name: 🚀 Start Ghost Recorder
+        env:
+          DISPLAY: :99
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+          ALLOWED_GROUP_ID: ${{ secrets.ALLOWED_GROUP_ID }}
+        run: npm start
