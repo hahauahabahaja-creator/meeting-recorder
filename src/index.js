@@ -6,6 +6,14 @@ const { keyboards, templates } = require('./ui/keyboards');
 const logger = require('./utils/logger');
 const fs = require('fs');
 const { execSync } = require('child_process');
+const express = require('express');
+
+// Initialize Express for Render Port Binding
+const app = express();
+const PORT = process.env.PORT || 10000;
+app.get('/', (req, res) => res.send('GHOST v3.0 is active.'));
+app.get('/ping', (req, res) => res.send('pong'));
+app.listen(PORT, () => console.log(`[SYSTEM] Port binding active on ${PORT}`));
 
 let vosk = null; let wav = null;
 try { vosk = require('vosk'); wav = require('wav'); } catch (e) { console.log("Native modules not loaded."); }
